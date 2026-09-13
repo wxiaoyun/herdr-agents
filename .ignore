@@ -1,0 +1,2 @@
+# Dependency source for reference. Search it explicitly: rg foo deps/herdr
+deps/

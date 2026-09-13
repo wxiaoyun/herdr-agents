@@ -1,0 +1,8 @@
+[submodule "deps/pi"]
+	path = deps/pi
+	url = https://github.com/earendil-works/pi.git
+	shallow = true
+[submodule "deps/herdr"]
+	path = deps/herdr
+	url = https://github.com/herdrdev/herdr.git
+	shallow = true

@@ -14,7 +14,7 @@
     "herdr-agents-mcp": "./packages/claude/bin/herdr-agents-mcp.ts"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --dir packages",
     "typecheck": "tsc --noEmit",
     "lint": "biome check packages/"
   },
