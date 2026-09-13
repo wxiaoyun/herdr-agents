@@ -130,7 +130,7 @@ export interface AgentInfo {
 const toAgentInfo = (a: any): AgentInfo => ({
   status: a.agent_status ?? "unknown",
   pane: a.pane_id,
-  name: a.label,
+  name: a.name ?? undefined,
   harness: a.agent,
   cwd: a.cwd,
   sessionPath:

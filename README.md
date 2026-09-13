@@ -15,7 +15,7 @@ Vocabulary is in [CONTEXT.md](./CONTEXT.md).
 pi parent:
 
 ```
-pi install git:github.com/wxiaoyun/pi-herdr-subagents
+pi install git:github.com/wxiaoyun/herdr-agents
 ```
 
 Claude Code parent, once per user (path is wherever you cloned or pi installed the repo):

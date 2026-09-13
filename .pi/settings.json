@@ -2,7 +2,7 @@
   "packages": [
     "../",
     {
-      "source": "git:github.com/wxiaoyun/pi-herdr-subagents",
+      "source": "git:github.com/wxiaoyun/herdr-agents",
       "autoload": false,
       "extensions": [
         "-packages/pi/src/index.ts"

@@ -593,7 +593,8 @@ export class Manager {
     const p = await this.peer(o.resume!, o.background);
     if (p.harness !== "pi" && p.harness !== "claude")
       throw new Error(`${p.id} runs ${p.harness}; only pi and claude peers can be resumed, SendMessage it instead`);
-    if (p.status !== "idle")
+    // herdr `done` is a finished turn nobody has looked at yet: as good as idle.
+    if (p.status !== "idle" && p.status !== "done")
       throw new Error(`${p.id} is ${p.status}; only an idle peer can be resumed, SendMessage it instead`);
     this.children.set(p.id, p);
     await this.acquire(signal);
@@ -836,7 +837,8 @@ export class Manager {
       return (await this.foreground(child, undefined, timeoutMs, signal)).text;
     }
     if (["idle", "done", "killed"].includes(child.status)) {
-      if (child.peer && !child.report) child.report = await this.collect(child);
+      // A Peer may have run turns since: reread the session instead of the stored report.
+      if (child.status === "idle") child.report = await this.collect(child);
       return this.formatReport(child);
     }
     const recent = await this.hFor(child)
