@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "packages/*/bin/**/*.ts"]
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "packages/*/bin/**/*.ts", "test/**/*.ts"]
 }
