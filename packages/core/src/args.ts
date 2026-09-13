@@ -98,6 +98,9 @@ export function claudeModel(model: string): string {
   return model.slice(slash + 1);
 }
 
+/** Claude models without auto mode. A bare alias (`sonnet`, `opus`) is the latest, which has it. */
+const NO_AUTO_MODE = /haiku|sonnet-4-[0-5]\b|opus-4-[0-5]\b|claude-3/;
+
 function claudeArgs(c: ChildSpec, s: Settings): string[] {
   const p = c.profile;
   const args = ["--name", c.id];
@@ -119,10 +122,13 @@ function claudeArgs(c: ChildSpec, s: Settings): string[] {
     // A profile that enumerates its tools has approved them: never prompt.
     args.push("--tools", list, "--allowedTools", list);
   }
-  // bypassPermissions shows a startup confirmation that blocks the pane, so
-  // edits are auto-accepted and everything else prompts. claudeArgs may change it.
+  // Auto mode lets a classifier approve or deny each action, so the child
+  // rarely stops on a prompt. Models without auto mode (Haiku, Sonnet and
+  // Opus up to 4.5) fall back to manual, which prompts more than acceptEdits.
+  // bypassPermissions shows a startup confirmation that blocks the pane.
+  // claudeArgs may override.
   if (!s.claudeArgs.includes("--permission-mode"))
-    args.push("--permission-mode", "acceptEdits");
+    args.push("--permission-mode", c.model && NO_AUTO_MODE.test(c.model) ? "acceptEdits" : "auto");
   if (!c.remote) args.push("--mcp-config", mcpConfig());
   if (c.session) args.push("--resume", c.session);
   return [...args, ...s.claudeArgs];

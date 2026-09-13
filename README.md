@@ -79,7 +79,7 @@ The child's tab lands in the same `<label>-agents` workspace on the machine. Its
 | model                | `provider/id`, inherits parent when pi      | `anthropic/<id>` loses its prefix, bare ids pass through, other providers error     |
 | thinking             | `--thinking` as given                       | `--effort`, `off` and `minimal` become `low`                                       |
 | tools                | `--tools` plus the subagent tools           | `--tools` verbatim; builtin profiles are translated (`read` to `Read`, `find` to `Glob`, ...) |
-| permissions          | n/a                                         | `--permission-mode acceptEdits`, profile tools also go to `--allowedTools`, override via `claudeArgs`. `bypassPermissions` blocks startup on a confirmation |
+| permissions          | n/a                                         | `--permission-mode auto` (a classifier approves or denies each action, Opus 4.6+ and Sonnet 4.6+ only), `acceptEdits` for models without auto mode (Haiku, Sonnet and Opus up to 4.5). Profile tools also go to `--allowedTools`. Override via `claudeArgs`. `bypassPermissions` blocks startup on a confirmation |
 | native subagents     | none                                        | native `Agent`, `SendMessage`, `ListAgents` stay available, except for profiles that may not spawn (Scout) |
 | report into parent   | pi message queue (`notify` setting applies) | typed into the parent's pane as a user message (`notify` ignored)                   |
 | `expect_reply`       | herdr shows `blocked`                       | best effort, herdr's screen detection may override                                  |

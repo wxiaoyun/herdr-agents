@@ -87,6 +87,16 @@ describe("claude child spawn", () => {
     expect(args).not.toContain("--thinking");
     expect(args.some((a) => a.includes("\n"))).toBe(false);
   });
+
+  it("uses auto mode where the model has it, acceptEdits elsewhere", async () => {
+    const mode = async (model?: string) => (await startArgs({ model })).flag("--permission-mode");
+    expect(await mode()).toBe("auto");
+    expect(await mode("claude-sonnet-5")).toBe("auto");
+    expect(await mode("anthropic/claude-opus-4-6")).toBe("auto");
+    expect(await mode("opus")).toBe("auto");
+    expect(await mode("claude-haiku-4-5")).toBe("acceptEdits");
+    expect(await mode("claude-opus-4-5-20251101")).toBe("acceptEdits");
+  });
 });
 
 describe("claude child model", () => {
