@@ -19,6 +19,8 @@ import {
 import type { Harness, ParentHarness } from "./parent-harness.ts";
 import type { Profile } from "./profiles.ts";
 import {
+  abnormalStop,
+  formatStats,
   formatUsage,
   parseLastSpeaker,
   parseReport,
@@ -440,7 +442,13 @@ export class Manager {
   ): Promise<[string, string]> {
     const h = this.hFor(child);
     const ws = await this.childWorkspace(child, cwd);
-    const made = await h.tabCreate(child.id, cwd, env, ws);
+    const made = await h.tabCreate(child.id, cwd, env, ws).catch(async (e) => {
+      // Someone closed the cached child workspace: resolve it again, once.
+      if (!(e instanceof HerdrError && e.code === "workspace_not_found")) throw e;
+      log("child_workspace_stale", { id: ws, machine: child.machine?.label });
+      this.childWs.delete(child.machine?.id ?? "");
+      return h.tabCreate(child.id, cwd, env, await this.childWorkspace(child, cwd));
+    });
     // ponytail: exact string compare; a symlinked cwd (macOS /tmp) would trip
     // it, resolve both sides if that bites.
     if (!sameDir(made.cwd, cwd)) {
@@ -778,17 +786,21 @@ export class Manager {
         log("read_session", { id: child.id, path: child.sessionPath, error: String(e) });
         return "";
       });
-    return parseReport(child.harness, raw);
+    const r = parseReport(child.harness, raw);
+    if (r.model && !child.peer) child.model = r.model;
+    return r;
   }
 
+  /** The session Report, or the screen only when the session has no messages at all. */
   private async collect(child: Child): Promise<Report> {
     const r = await this.fromSession(child);
-    if (r?.text) return r;
+    if (r?.usage.turns) return r;
+    log("report_screen_fallback", { id: child.id, path: child.sessionPath });
     const screen = await this.hFor(child)
       .agentRead(this.ref(child), 120)
       .catch(() => "");
     return {
-      text: screen.trim(),
+      text: `(no session messages found, raw screen follows)\n${screen.trim()}`,
       usage: { input: 0, output: 0, cost: 0, turns: 0 },
     };
   }
@@ -802,15 +814,18 @@ export class Manager {
 
   formatReport(child: Child): string {
     const r = child.report;
-    const head = `[${this.who(child)}${r ? ` | ${formatUsage(r.usage)}` : ""}]`;
-    const body = r?.text || "(no output)";
+    const head = `[${this.who(child)}${r ? ` | ${formatStats(r)}` : ""}]`;
+    const body = r ? r.text || "(no assistant text in the latest turn)" : "(no output)";
+    const warn = abnormalStop(r)
+      ? `\n(the turn did not finish normally: stop=${r!.stop}${r!.error ? `, ${r!.error}` : ""}${r!.stop === "length" || r!.stop === "max_tokens" ? ", the response was truncated at the output limit" : ""})`
+      : "";
     const tail =
       child.status === "blocked"
         ? `\n(${child.id} is waiting for a reply via SendMessage)`
         : child.status === "idle"
           ? `\n(${child.id} is idle: SendMessage to it or Agent resume to continue${child.peer ? "" : ", KillAgent to close"})`
           : "";
-    return `${head}\n${body}${tail}`;
+    return `${head}\n${body}${warn}${tail}`;
   }
 
   private deliver(child: Child): void {

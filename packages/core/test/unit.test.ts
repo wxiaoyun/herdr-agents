@@ -117,6 +117,101 @@ describe("session", () => {
       turns: 2,
     });
   });
+
+  const piMsg = (role: string, content: unknown[], extra = {}) =>
+    JSON.stringify({
+      type: "message",
+      message: { role, content, usage: { input: 10, output: 5 }, ...extra },
+    });
+
+  it("reports only the latest turn and its stop reason", () => {
+    const f = join(tmp(), "s.jsonl");
+    writeFileSync(
+      f,
+      [
+        piMsg("user", [{ type: "text", text: "go" }]),
+        piMsg("assistant", [{ type: "text", text: "Now let me check..." }], { stopReason: "stop" }),
+        piMsg("user", [{ type: "text", text: "continue" }]),
+        piMsg("assistant", [{ type: "toolCall" }], { stopReason: "toolUse" }),
+        piMsg("toolResult", [{ type: "text", text: "ok" }]),
+        piMsg("assistant", [{ type: "thinking", thinking: "plan" }], {
+          stopReason: "length",
+          provider: "llmbox",
+          model: "glm-5.3-flash",
+        }),
+      ].join("\n"),
+    );
+    const r = readReport("pi", f);
+    expect(r.text).toBe("");
+    expect(r.stop).toBe("length");
+    expect(r.model).toBe("llmbox/glm-5.3-flash");
+    expect(r.usage.turns).toBe(3);
+  });
+
+  it("keeps session usage and flags truncation when the turn has no text", async () => {
+    const f = join(tmp(), "s.jsonl");
+    writeFileSync(
+      f,
+      piMsg("assistant", [{ type: "thinking", thinking: "plan" }], {
+        stopReason: "length",
+        model: "glm",
+      }),
+    );
+    const fake: Herdr = {
+      ...emptyHerdr(),
+      agentGet: async () => ({ status: "idle", pane: "w1:p8", sessionPath: f }),
+      agentPromptWait: async () => ({ status: "idle", pane: "w1:p8", sessionPath: f }),
+    };
+    const m = new Manager(piStub(), DEFAULTS, fake);
+    const r = await m.spawn({
+      prompt: "go",
+      description: "d",
+      profile: BUILTIN_PROFILES[0],
+      harness: "pi",
+      cwd: "/",
+      background: false,
+      timeoutMs: 0,
+      depth: 1,
+    });
+    expect(r.text).toContain("| glm |");
+    expect(r.text).toContain("turns=1 in=10 out=5");
+    expect(r.text).toContain("stop=length");
+    expect(r.text).toContain("truncated at the output limit");
+    expect(r.text).not.toContain("screen");
+  });
+
+  it("looks the child workspace up again when herdr no longer has it", async () => {
+    const prev = process.env.HERDR_WORKSPACE_ID;
+    process.env.HERDR_WORKSPACE_ID = "w1";
+    const ids = ["w9", "w10"];
+    const used: Array<string | undefined> = [];
+    const fake: Herdr = {
+      ...emptyHerdr(),
+      workspaceByLabel: async () => ids.shift()!,
+      tabCreate: async (_l, cwd, _e, ws) => {
+        used.push(ws);
+        if (ws === "w9") throw new HerdrError("workspace w9 not found", "workspace_not_found");
+        return { pane: "w10:p1", cwd };
+      },
+    };
+    try {
+      const m = new Manager(piStub(), DEFAULTS, fake);
+      await m.spawn({
+        prompt: "go",
+        description: "d",
+        profile: BUILTIN_PROFILES[0],
+        harness: "pi",
+        cwd: "/",
+        background: false,
+        timeoutMs: 0,
+        depth: 1,
+      });
+      expect(used).toEqual(["w9", "w10"]);
+    } finally {
+      if (prev === undefined) delete process.env.HERDR_WORKSPACE_ID;
+      else process.env.HERDR_WORKSPACE_ID = prev;
+    }
+  });
 });
 
 describe("profiles", () => {

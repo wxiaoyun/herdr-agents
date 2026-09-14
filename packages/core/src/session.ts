@@ -5,9 +5,21 @@ import { log } from "./herdr.ts";
 import type { Harness } from "./parent-harness.ts";
 
 export interface Report {
+  /** Last assistant text of the latest turn, empty when that turn has none. */
   text: string;
   usage: { input: number; output: number; cost: number; turns: number };
+  /** Stop reason of the last assistant message, in the harness's own words. */
+  stop?: string;
+  /** Error the harness recorded on the last assistant message. */
+  error?: string;
+  /** Model that produced the last assistant message. */
+  model?: string;
 }
+
+/** Stop reasons of a turn that finished normally, pi and Claude Code. */
+const NORMAL_STOPS = new Set(["stop", "end_turn", "stop_sequence"]);
+export const abnormalStop = (r: Report | undefined): boolean =>
+  !!r?.stop && !NORMAL_STOPS.has(r.stop);
 
 const EMPTY = (): Report => ({
   text: "",
@@ -42,21 +54,35 @@ const textOf = (m: any): string =>
     .map((c: any) => c.text)
     .join("");
 
-/** pi: `{type:"message", message:{role, content, usage:{input,output,cost:{total}}}}` */
+/**
+ * pi: `{type:"message", message:{role, content, stopReason, errorMessage,
+ * provider, model, usage:{input,output,cost:{total}}}}`. A user message starts
+ * a new turn, so text from an earlier turn never stands in for the latest one.
+ */
 function readPi(raw: string): Report {
   const r = EMPTY();
   for (const e of entries(raw)) {
     const m = e?.message;
-    if (e?.type !== "message" || m?.role !== "assistant") continue;
+    if (e?.type !== "message") continue;
+    if (m?.role === "user") r.text = "";
+    if (m?.role !== "assistant") continue;
     r.usage.turns++;
     r.usage.input += m.usage?.input ?? 0;
     r.usage.output += m.usage?.output ?? 0;
     r.usage.cost += m.usage?.cost?.total ?? 0;
+    r.stop = m.stopReason;
+    r.error = m.errorMessage;
+    if (m.model) r.model = m.provider ? `${m.provider}/${m.model}` : m.model;
     const t = textOf(m);
     if (t.trim()) r.text = t;
   }
   return r;
 }
+
+/** A Claude Code user entry typed as a prompt, not one carrying tool results. */
+const isPrompt = (m: any): boolean =>
+  typeof m?.content === "string" ||
+  (Array.isArray(m?.content) && m.content.some((c: any) => c.type !== "tool_result"));
 
 /**
  * Claude Code: `{type:"assistant", message:{id, role, content, usage:{input_tokens,output_tokens}}}`.
@@ -69,7 +95,10 @@ function readClaude(raw: string): Report {
   const seen = new Set<string>();
   for (const e of entries(raw)) {
     const m = e?.message;
+    if (e?.type === "user" && isPrompt(m)) r.text = "";
     if (e?.type !== "assistant" || m?.role !== "assistant") continue;
+    r.stop = m.stop_reason ?? r.stop;
+    if (m.model) r.model = m.model;
     const id = String(m.id ?? r.usage.turns);
     if (!seen.has(id)) {
       seen.add(id);
@@ -142,3 +171,7 @@ export function sessionPathFor(
 
 export const formatUsage = (u: Report["usage"]): string =>
   `turns=${u.turns} in=${u.input} out=${u.output} cost=$${u.cost.toFixed(4)}`;
+
+/** Usage plus the stop reason, for a Report header. */
+export const formatStats = (r: Report): string =>
+  `${formatUsage(r.usage)}${r.stop ? ` stop=${r.stop}` : ""}`;

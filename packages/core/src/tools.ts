@@ -281,7 +281,7 @@ export function createTools(
   const list: ToolDef<typeof ListParams> = {
     name: "ListAgents",
     description:
-      "Every agent herdr sees, on this machine and on enabled saved machines, one per line: id, relation to this session (parent, child, peer), harness, status, machine, cwd. Children add profile and description. Ids off this machine are `<machine>/<id>`. Use the ids as SendMessage `to`, Agent `resume` and GetAgentResult `agent_id`.",
+      "Every agent herdr sees, on this machine and on enabled saved machines, one per line: id, relation to this session (parent, child, peer), harness, status, machine, cwd. Children add profile, model and description. A child's model is the resolved one once it has answered. Ids off this machine are `<machine>/<id>`. Use the ids as SendMessage `to`, Agent `resume` and GetAgentResult `agent_id`.",
     parameters: ListParams,
     async execute() {
       const all = await getManager().agents();
@@ -296,7 +296,7 @@ export function createTools(
               a.status,
               a.machine?.label ?? "local",
               a.cwd ?? "-",
-              ...(a.child ? [a.child.profile, a.child.description] : []),
+              ...(a.child ? [a.child.profile, a.child.model ?? "default model", a.child.description] : []),
             ].join("  "),
           )
           .join("\n"),
