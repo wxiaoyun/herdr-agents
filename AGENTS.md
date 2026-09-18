@@ -2,8 +2,8 @@
 
 Source for pi and herdr lives in `deps/` as shallow git submodules, pinned to the versions this project targets. Read it there, not in sibling clones, which drift. Run `git submodule update --init` once after cloning. `deps/` is in `.ignore`, so search it explicitly, for example `rg agent_status deps/herdr`.
 
-- `deps/pi`: pi at `v0.84.2`, the version pinned in `package.json`. Bump both together.
-- `deps/herdr`: the herdr commit the local build runs, after 0.9.0 because `--machine` needs it. Also read `herdr --skill` and https://herdr.dev/llms.txt for the CLI contract.
+- `deps/pi`: pi at `v0.85.1`, the version pinned in `package.json`. Bump both together.
+- `deps/herdr`: herdr at `v0.9.1`, the minimum version this project supports, because `--machine` needs it. The README states the same floor, change both together. Also read `herdr --skill` and https://herdr.dev/llms.txt for the CLI contract.
 - Claude Code is closed source. Docs index: https://code.claude.com/docs/llms.txt. Pages this project depends on: [permission modes](https://code.claude.com/docs/en/permission-modes.md), [MCP](https://code.claude.com/docs/en/mcp.md), [CLI reference](https://code.claude.com/docs/en/cli-reference.md).
 
 ### Keep dependencies current

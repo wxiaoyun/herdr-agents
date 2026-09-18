@@ -7,7 +7,7 @@ Vocabulary is in [CONTEXT.md](./CONTEXT.md).
 ## Requirements
 
 - Node >= 26
-- herdr >= 0.8.2 with the integrations installed for the harnesses you use: `herdr integration install pi`, `herdr integration install claude`
+- herdr >= 0.9.1 with the integrations installed for the harnesses you use: `herdr integration install pi`, `herdr integration install claude`
 - The parent must run inside a herdr pane. Outside herdr the tools do nothing.
 
 ## Install
@@ -39,16 +39,16 @@ Claude Code children spawned by either parent get the MCP server injected automa
 | Tool                  | Purpose                                                                                                                                                                                                                                                                                                                                              |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Agent`          | Spawn a child. `harness: pi \| claude` picks the child harness (default: profile, then the parent's). Blocks until the child's turn ends and returns its report. `run_in_background: true` returns at once, the report arrives later as a message. `machine: <id or label>` runs the child on a saved herdr machine (see Machines). `resume: <id>` sends another prompt to an existing child, relaunching it from its session if its pane is gone. |
-| `GetAgentResult` | Any agent: status plus recent screen, or its latest report (pi and claude). `wait: true` blocks.                                                                                                                                                                                                                                                                                 |
+| `GetAgentResult` | Any agent: status plus recent screen, or its latest report (pi and claude). `wait: true` blocks. The screen of an unfinished agent is marked as a live screen, not a report. |
 | `SendMessage`    | Text to any agent from `ListAgents`, prefixed `[from <sender id>]`. To an idle child this starts a new turn, the report arrives later as a message. A peer's report does not come back. `to` omitted in a child means the parent. `kind`: `message` (prompt, steers if busy), `interrupt` (esc first), `keys` (raw keys like `enter` or `ctrl+c`). `expect_reply: true` marks the sender `blocked` in herdr until someone replies. |
 | `KillAgent`      | Close a child's pane. Never a peer.                                                                                                                                                                                                                                                                                                                              |
-| `ListAgents`     | Every agent herdr sees, locally and on enabled saved machines: id, relation (`parent`, `child`, `peer`), harness, status, machine, cwd.                                                                                                                                                                                                                                                                              |
+| `ListAgents`     | Every agent herdr sees, locally and on enabled saved machines: id, relation (`parent`, `child`, `peer`), harness, status, machine, cwd. `relation` and `status` filter the list. A queued child shows its place in the queue. A killed child whose pane is gone is listed only with `status: killed`. |
 
 Child ids are `<child harness>-<name>-<n>`, for example `claude-scout-2`, unique among the live agents on the child's machine.
 
 A child that stops on a startup dialog (Claude Code's folder trust prompt, a login) pauses until a person answers it in the pane. The parent never answers it. A foreground spawn keeps waiting, a background spawn returns `blocked` at once. The task prompt goes in once the child is idle and the report follows as usual. A child that exits during startup reports that and stays `idle` for `resume`.
 
-A child's turn ends in status `idle`: its pane stays open and it keeps its context. Continue it with `SendMessage` (background) or `Agent` with `resume` (blocks like a spawn). Close it with `KillAgent` or by ending the parent session. Set `close_on_done = true` to close panes at the end of every turn instead.
+A child's turn ends in status `idle`: its pane stays open and it keeps its context. Continue it with `SendMessage` (background) or `Agent` with `resume` (blocks like a spawn). Only an idle child can be resumed: a busy one is refused, steer it with `SendMessage`, `kind: interrupt` to press esc first. Close it with `KillAgent` or by ending the parent session. Set `close_on_done = true` to close panes at the end of every turn instead.
 
 ## Placement
 
@@ -64,7 +64,7 @@ A peer is any agent that is neither this session's parent nor its child: sibling
 
 `Agent` with `machine` runs the child on another herdr server. The value is the id or label of a profile saved with `herdr machine add`; without saved machines nothing changes. Every herdr call for that child goes through `herdr --machine <id>`, which forwards it over SSH to the remote server. Requirements:
 
-- herdr newer than 0.9.0 on both sides (the `--machine` CLI prefix), a running herdr server on the machine, and `ssh <target>` working non-interactively. herdr's own errors say which one is missing.
+- herdr >= 0.9.1 on both sides (the `--machine` CLI prefix), a running herdr server on the machine, and `ssh <target>` working non-interactively. herdr's own errors say which one is missing.
 - The child harness (pi or Claude Code) installed and authenticated on the machine.
 - `cwd` exists on the machine. The default is the parent's cwd relative to the local home, which lands at the same place under the remote home, so `/Users/me/code/x` becomes `~/code/x` over there. A parent cwd outside the home is kept as is. herdr silently falls back to `$HOME` for a missing directory, so the spawn checks the pane's cwd and fails instead.
 
