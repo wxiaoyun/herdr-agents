@@ -82,7 +82,8 @@ try {
   const screen = () => herdr("pane", "read", pane, "--source", "visible", "--lines", "60");
   herdr("pane", "send-text", pane, `/agents send ${machine.slice(0, 4)}`);
   // Completion lists agents over ssh per machine: poll instead of guessing a delay.
-  const popup = new RegExp(`→\\s+${rid}\\s+peer`);
+  // No selection arrow: another agent on the machine may sort first.
+  const popup = new RegExp(`${rid}\\s+peer`);
   for (let i = 0; i < 20 && !popup.test(screen()); i++) await nap(500);
   check("pi /agents send completes remote ids", popup.test(screen()), screen());
   herdr("agent", "send-keys", lid, "ctrl+u");
