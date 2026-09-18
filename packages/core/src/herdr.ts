@@ -359,6 +359,10 @@ export function bind(machine?: Machine) {
         { raw: true },
       );
     },
+    /** Screen of a pane no agent is registered in, e.g. after a failed start. */
+    async paneRead(pane: string, lines: number): Promise<string> {
+      return call(["pane", "read", pane, "--source", "recent-unwrapped", "--lines", String(lines)], { raw: true });
+    },
     async agentFocus(id: string): Promise<void> {
       await call(["agent", "focus", id]);
     },

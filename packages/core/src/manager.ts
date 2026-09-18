@@ -364,8 +364,12 @@ export class Manager {
         return;
       }
       log("agent_start_failed", { id: child.id, error: String(e) });
+      // The harness usually says why on its way out (unknown model, tool
+      // name conflict), and the pane is about to close.
+      const screen = await h.paneRead(child.pane, 30).catch(() => "");
       await this.closePane(child);
-      throw e;
+      if (!screen.trim()) throw e;
+      throw new Error(`${String(e)}\nlast screen of ${child.id}:\n${screen.trim()}`);
     } finally {
       rmSync(staged, { recursive: true, force: true });
       await h.unstage(stagedAs);

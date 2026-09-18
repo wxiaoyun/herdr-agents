@@ -32,6 +32,7 @@ const emptyHerdr = (): Herdr => ({
   agentGet: async () => ({ status: "idle", pane: "w1:p8" }),
   agentList: async () => [],
   agentRead: async () => "screen",
+  paneRead: async () => "pane screen",
   agentFocus: async () => {},
   sendKeys: async () => {},
   paneRun: async () => {},

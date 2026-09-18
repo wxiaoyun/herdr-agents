@@ -46,6 +46,7 @@ const emptyHerdr = (): Herdr => ({
   agentGet: async () => ({ status: "idle", pane: "w1:p8" }),
   agentList: async () => [],
   agentRead: async () => "screen",
+  paneRead: async () => "pane screen",
   agentFocus: async () => {},
   sendKeys: async () => {},
   paneRun: async () => {},
@@ -552,6 +553,7 @@ describe("manager queue", () => {
       }),
       agentList: async () => [],
       agentRead: async () => "screen",
+      paneRead: async () => "pane screen",
       agentFocus: async () => {},
       sendKeys: async () => {},
       paneRun: async () => {},
@@ -928,6 +930,23 @@ describe("listing and busy children", () => {
     expect(starts).toBe(1);
     await spawn("d");
     expect(starts).toBe(2);
+  });
+});
+
+describe("failed start", () => {
+  it("reports the pane's last screen with the start error", async () => {
+    const fake: Herdr = {
+      ...emptyHerdr(),
+      agentStart: async () => {
+        throw new HerdrError("agent start failed: timed out waiting for agent startup", "timeout");
+      },
+      paneRead: async () => 'Error: Model "x/y" not found.',
+    };
+    const tools = createTools(piStub(), tmp, fake);
+    const r = await tools.agent.execute({ prompt: "p", description: "d" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("timed out waiting for agent startup");
+    expect(r.text).toContain('Model "x/y" not found');
   });
 });
 
