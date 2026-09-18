@@ -132,7 +132,19 @@ const SendParams = Type.Object({
 
 const KillParams = Type.Object({ agent_id: Type.String() });
 
-const ListParams = Type.Object({});
+const ListParams = Type.Object({
+  relation: Type.Optional(
+    Type.Union([Type.Literal("parent"), Type.Literal("child"), Type.Literal("peer")], {
+      description: "Only agents with this relation to this session.",
+    }),
+  ),
+  status: Type.Optional(
+    Type.String({
+      description:
+        "Only agents with this status, e.g. running, queued, idle, blocked, killed. Killed children whose pane is gone are listed only when asked for with status=killed.",
+    }),
+  ),
+});
 
 export interface ToolSet {
   agent: ToolDef<typeof AgentParams>;
@@ -281,10 +293,17 @@ export function createTools(
   const list: ToolDef<typeof ListParams> = {
     name: "ListAgents",
     description:
-      "Every agent herdr sees, on this machine and on enabled saved machines, one per line: id, relation to this session (parent, child, peer), harness, status, machine, cwd. Children add profile, model and description. A child's model is the resolved one once it has answered. Ids off this machine are `<machine>/<id>`. Use the ids as SendMessage `to`, Agent `resume` and GetAgentResult `agent_id`.",
+      "Every agent herdr sees, on this machine and on enabled saved machines, one per line: id, relation to this session (parent, child, peer), harness, status, machine, cwd. Children add profile, model and description. A child's model is the resolved one once it has answered. A queued child shows its place in the queue. Killed children whose pane is gone are hidden unless status=killed. Ids off this machine are `<machine>/<id>`. Use the ids as SendMessage `to`, Agent `resume` and GetAgentResult `agent_id`.",
     parameters: ListParams,
-    async execute() {
-      const all = await getManager().agents();
+    async execute(p) {
+      const every = await getManager().agents();
+      // Queue order is spawn order, which is the order `agents()` lists queued children in.
+      const queued = every.filter((a) => a.status === "queued");
+      const all = every.filter(
+        (a) =>
+          (!p.relation || a.relation === p.relation) &&
+          (p.status ? a.status === p.status : a.live || a.status !== "killed"),
+      );
       if (!all.length) return ok("no other agents");
       return ok(
         all
@@ -293,7 +312,7 @@ export function createTools(
               a.id,
               a.relation,
               a.harness ?? "-",
-              a.status,
+              a.status === "queued" ? `queued #${queued.indexOf(a) + 1}/${queued.length}` : a.status,
               a.machine?.label ?? "local",
               a.cwd ?? "-",
               ...(a.child ? [a.child.profile, a.child.model ?? "default model", a.child.description] : []),

@@ -74,6 +74,8 @@ export interface AgentEntry {
   cwd?: string;
   machine?: Machine;
   child?: Child;
+  /** herdr still lists it. False for a queued, killed or unreachable child. */
+  live: boolean;
 }
 
 export interface SpawnOpts {
@@ -209,13 +211,14 @@ export class Manager {
           cwd: a.cwd,
           machine,
           child,
+          live: true,
         });
       }
     });
     // Children herdr no longer lists (queued, killed, or on an unreachable machine).
     for (const c of this.children.values())
       if (!c.peer && !seen.has(c))
-        out.push({ id: this.idOf(c), relation: "child", harness: c.harness, status: c.status, cwd: c.cwd, machine: c.machine, child: c });
+        out.push({ id: this.idOf(c), relation: "child", harness: c.harness, status: c.status, cwd: c.cwd, machine: c.machine, child: c, live: false });
     return out;
   }
 
@@ -413,8 +416,7 @@ export class Manager {
           child.background = true;
           return this.awaitStartup(child, { ...o, background: true });
         }
-        this.lost(child, e);
-        throw e;
+        throw await this.lost(child, e);
       }
       return this.foreground(child, o.prompt, o.timeoutMs, signal);
     }
@@ -512,6 +514,8 @@ export class Manager {
     this.children.set(child.id, child);
 
     const run = async () => {
+      // Killed while queued: hand the slot on instead of launching.
+      if (child.status === "killed") return this.release(child);
       await this.launch(child, o);
       if (child.status === "blocked") await this.awaitStartup(child, o);
       else this.watchPrompt(child, o.prompt, o.timeoutMs);
@@ -580,6 +584,11 @@ export class Manager {
         throw e;
       });
       if (child.status === "blocked") return this.awaitStartup(child, o, signal);
+    } else if (["starting", "running", "blocked"].includes(child.status)) {
+      // A second prompt-wait on a busy child would queue behind its current tool call and race the first watcher.
+      throw new Error(
+        `${child.id} is ${child.status}; only an idle child can be resumed. SendMessage it instead, with kind=interrupt to stop its current tool call first`,
+      );
     } else if (child.released) {
       await this.acquire(signal);
       child.released = false;
@@ -629,7 +638,7 @@ export class Manager {
       const info = prompt
         ? await h.agentPromptWait(this.ref(child), prompt, timeoutMs, signal)
         : await h.agentWait(this.ref(child), timeoutMs, signal);
-      await this.finish(child, info);
+      await this.finish(child, await this.settled(child, info, timeoutMs, signal));
     } catch (e) {
       if (signal?.aborted) {
         log("foreground_detach", { id: child.id });
@@ -646,8 +655,7 @@ export class Manager {
       } else if (await this.stalledToFinish(child, e)) {
         // herdr gave up observing a transition, but the child already finished.
       } else {
-        this.lost(child, e);
-        throw e;
+        throw await this.lost(child, e);
       }
     }
     return {
@@ -688,6 +696,34 @@ export class Manager {
     return false;
   }
 
+  /**
+   * herdr can report a turn over while the session still ends on a tool call
+   * (a dropped state report from the child's hook). Look again after a pause
+   * and keep waiting only if herdr then says `working`, so an interrupted
+   * turn, which also ends mid tool call, still finishes.
+   */
+  settleMs = 2000;
+
+  private async settled(
+    child: Child,
+    info: AgentInfo,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<AgentInfo> {
+    const h = this.hFor(child);
+    for (;;) {
+      const path = info.sessionPath ?? child.sessionPath;
+      if (info.status === "blocked" || !path) return info;
+      const who = await this.speaker(child, path);
+      if (!who || who === "assistant") return info;
+      await new Promise((r) => setTimeout(r, this.settleMs));
+      const now = await h.agentGet(this.ref(child)).catch(() => undefined);
+      if (now?.status !== "working") return info;
+      log("premature_idle", { id: child.id, status: info.status, speaker: who });
+      info = await h.agentWait(this.ref(child), timeoutMs, signal);
+    }
+  }
+
   private async speaker(child: Child, path: string): Promise<string | undefined> {
     const raw = await this.hFor(child)
       .readFile(path)
@@ -721,13 +757,13 @@ export class Manager {
     const ac = new AbortController();
     child.watcher = ac;
     void op(ac.signal)
-      .then((info) => this.finish(child, info))
+      .then(async (info) => this.finish(child, await this.settled(child, info, 0, ac.signal)))
       .catch(async (e) => {
         if (ac.signal.aborted) return;
         if (e instanceof HerdrError && e.code === "timeout")
           await this.timeout(child);
         else if (await this.stalledToFinish(child, e)) return;
-        else this.lost(child, e);
+        else await this.lost(child, e);
       })
       .then(() => {
         if (!ac.signal.aborted) this.deliver(child);
@@ -773,9 +809,20 @@ export class Manager {
    * Machine child keeps running out of sight (a dropped bridge is the likely
    * cause), so it goes idle and Resume relaunches it if it is truly gone.
    */
-  private lost(child: Child, e: unknown): void {
-    this.fail(child, e);
+  private async lost(child: Child, e: unknown): Promise<Error> {
+    // herdr only says the wait failed. The reason (provider outage, bad model
+    // id, crash) is on the child's screen, so it travels with the error.
+    const screen = child.pane
+      ? await this.hFor(child)
+          .agentRead(this.ref(child), 30)
+          .catch(() => "")
+      : "";
+    const err = new Error(
+      `${String(e)}${screen.trim() ? `\nlast screen of ${child.id}:\n${screen.trim()}` : ""}`,
+    );
+    this.fail(child, err);
     if (child.machine || child.peer) child.status = "idle";
+    return err;
   }
 
   private async fromSession(child: Child): Promise<Report | undefined> {
@@ -859,7 +906,7 @@ export class Manager {
     const recent = await this.hFor(child)
       .agentRead(this.ref(child), 40)
       .catch(() => "");
-    return `[${this.who(child)} | pane ${child.pane}]\n${recent.trim()}`;
+    return `[${this.who(child)} | pane ${child.pane}]\n(${child.id} has not finished: this is its live screen, not a report)\n${recent.trim()}`;
   }
 
   async send(
@@ -910,8 +957,10 @@ export class Manager {
     if (child.peer) throw new Error(`${id} is a peer: only its parent can kill it`);
     child.watcher?.abort();
     await this.closePane(child);
+    // A queued child holds no slot yet: its turn in the queue releases it.
+    const queued = child.status === "queued";
     child.status = "killed";
-    this.release(child);
+    if (!queued) this.release(child);
   }
 
   async focus(id: string): Promise<void> {

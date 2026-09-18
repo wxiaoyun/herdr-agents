@@ -123,8 +123,8 @@ export const readReport = (harness: Harness, sessionPath: string): Report =>
 
 /**
  * Role of the last message entry, or undefined when the file has no messages
- * yet (missing file, boot in progress, garbage only). A Claude assistant entry
- * that stopped for a tool call is still mid-turn and counts as the user's.
+ * yet (missing file, boot in progress, garbage only). An assistant entry that
+ * stopped for a tool call is still mid-turn and counts as the user's.
  */
 export function parseLastSpeaker(
   harness: Harness,
@@ -138,7 +138,7 @@ export function parseLastSpeaker(
         : e?.type === "message";
     if (!isMsg || !e.message?.role) continue;
     last =
-      harness === "claude" && e.message.stop_reason === "tool_use"
+      e.message.stop_reason === "tool_use" || e.message.stopReason === "toolUse"
         ? "user"
         : e.message.role;
   }

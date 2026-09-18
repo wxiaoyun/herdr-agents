@@ -435,7 +435,7 @@ describe("prompt-wait stall recovery", () => {
         timeoutMs: 0,
         depth: 1,
       }),
-    ).rejects.toThrow("no observed working");
+    ).rejects.toThrow(/no observed working[\s\S]*last screen of pi-general-purpose-1:\nscreen/);
     expect(m.children.get([...m.children.keys()][0])?.status).toBe("killed");
   });
 
@@ -517,7 +517,7 @@ describe("prompt-wait stall recovery", () => {
         timeoutMs: 0,
         depth: 1,
       }),
-    ).rejects.toThrow("no observed working");
+    ).rejects.toThrow(/no observed working[\s\S]*last screen of pi-general-purpose-1:\nscreen/);
     expect(m.children.get([...m.children.keys()][0])?.status).toBe("killed");
   });
 });
@@ -746,12 +746,14 @@ describe("machines and idle children", () => {
       "box:stage /tmp/herdr-agents-X",
       "box:start mcp=false",
       "box:wait",
+      "box:read /remote/s.jsonl", // settle check
       "box:read /remote/s.jsonl",
       "box:close",
       "local:tab parent=w1:p1",
       "local:stage same",
       "local:start mcp=true",
       "local:wait",
+      "local:read /remote/s.jsonl", // settle check
       "local:read /remote/s.jsonl",
     ]);
   });
@@ -884,5 +886,81 @@ describe("machines and idle children", () => {
     expect(sent).toHaveLength(1);
     await m.kill(a.id);
     expect(closed).toEqual(["w1:p9"]);
+  });
+});
+
+describe("listing and busy children", () => {
+  it("shows the queue place, hides killed children, refuses to resume a busy child", async () => {
+    let starts = 0;
+    const fake: Herdr = {
+      ...emptyHerdr(),
+      agentStart: async () => {
+        starts++;
+      },
+      agentPromptWait: () => new Promise(() => {}),
+    };
+    const dir = tmp();
+    mkdirSync(join(dir, ".pi"), { recursive: true });
+    writeFileSync(join(dir, ".pi", "herdr-agents.json"), JSON.stringify({ maxConcurrent: 1 }));
+    const tools = createTools(piStub(), () => dir, fake);
+    const spawn = (name: string) =>
+      tools.agent.execute({ prompt: "p", description: "d", name, run_in_background: true });
+    await spawn("a");
+    await spawn("b");
+    await spawn("c");
+    const listed = (await tools.list.execute({})).text;
+    expect(listed).toContain("queued #1/2");
+    expect(listed).toContain("queued #2/2");
+
+    const busy = await tools.agent.execute({ prompt: "p", description: "d", resume: "pi-a-1" });
+    expect(busy.isError).toBe(true);
+    expect(busy.text).toContain("kind=interrupt");
+
+    await tools.kill.execute({ agent_id: "pi-c-3" });
+    expect((await tools.list.execute({})).text).not.toContain("pi-c-3");
+    expect((await tools.list.execute({ status: "killed" })).text).toContain("pi-c-3");
+    expect((await tools.list.execute({ relation: "peer" })).text).toBe("no other agents");
+
+    // The killed queued child never launches: the freed slot goes to the next one.
+    await tools.kill.execute({ agent_id: "pi-b-2" });
+    await tools.kill.execute({ agent_id: "pi-a-1" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(starts).toBe(1);
+    await spawn("d");
+    expect(starts).toBe(2);
+  });
+});
+
+describe("premature idle", () => {
+  it("keeps waiting when herdr says idle mid tool call and working right after", async () => {
+    const f = join(tmp(), "s.jsonl");
+    const line = (role: string, stopReason: string, text: string) =>
+      `${JSON.stringify({ type: "message", message: { role, stopReason, content: [{ type: "text", text }] } })}\n`;
+    writeFileSync(f, line("user", "", "go") + line("assistant", "toolUse", ""));
+    let waits = 0;
+    const fake: Herdr = {
+      ...emptyHerdr(),
+      agentPromptWait: async () => ({ status: "idle", pane: "w1:p9", sessionPath: f }),
+      agentGet: async () => ({ status: "working", pane: "w1:p9", sessionPath: f }),
+      agentWait: async () => {
+        waits++;
+        writeFileSync(f, line("user", "", "go") + line("assistant", "stop", "really finished"));
+        return { status: "idle", pane: "w1:p9", sessionPath: f };
+      },
+    };
+    const m = new Manager(piStub(), { ...DEFAULTS }, fake);
+    m.settleMs = 10;
+    const r = await m.spawn({
+      prompt: "go",
+      description: "d",
+      profile: BUILTIN_PROFILES[0],
+      harness: "pi",
+      cwd: "/",
+      background: false,
+      timeoutMs: 0,
+      depth: 1,
+    });
+    expect(waits).toBe(1);
+    expect(r.text).toContain("really finished");
   });
 });
