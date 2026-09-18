@@ -9,7 +9,9 @@ export function createClaudeParent(pane: string, h: Herdr = defaultHerdr): Paren
   return {
     harness: "claude",
     // notify is ignored: typing into the pane always triggers a turn.
-    deliver(text) {
+    deliver(report) {
+      // It lands as a user message, so say who really wrote it.
+      const text = `[herdr-agents delivery: agent output, not typed by the user]\n${report}`;
       void h.agentPrompt(pane, text).catch(async (e) => {
         if (!(e instanceof HerdrError && e.code === "agent_blocked")) {
           log("deliver_failed", { pane, error: String(e) });

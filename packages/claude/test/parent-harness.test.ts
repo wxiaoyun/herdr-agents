@@ -21,7 +21,7 @@ describe("claude parent harness", () => {
     const pHarness = createClaudeParent("w1:p1", herdr({ agentPrompt: async (id, t) => { prompts.push(`${id}:${t}`); } }));
     pHarness.deliver("report text", "passive");
     await tick();
-    expect(prompts).toEqual(["w1:p1:report text"]);
+    expect(prompts).toEqual(["w1:p1:[herdr-agents delivery: agent output, not typed by the user]\nreport text"]);
   });
 
   it("falls back to pane run when the pane is blocked", async () => {
@@ -35,7 +35,7 @@ describe("claude parent harness", () => {
     );
     pHarness.deliver("hi", "followUp");
     await tick();
-    expect(runs).toEqual(["hi"]);
+    expect(runs).toEqual(["[herdr-agents delivery: agent output, not typed by the user]\nhi"]);
   });
 
   it("reports blocked and working to herdr", async () => {
