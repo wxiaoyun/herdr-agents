@@ -21,7 +21,7 @@ export default function (pi: ExtensionAPI) {
     model: () => model,
     thinking: () => pi.getThinkingLevel(),
     deliver(text, notify) {
-      if (notify === "followUp") {
+      if (notify === "follow_up") {
         pi.sendUserMessage(text, { deliverAs: "followUp" });
       } else {
         pi.sendMessage(

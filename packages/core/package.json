@@ -4,8 +4,11 @@
   "type": "module",
   "private": true,
   "description": "Shared herdr client, child manager, profiles and tools",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "dependencies": {
+    "smol-toml": "^1.8.0",
     "typebox": "^1.3.7",
     "yaml": "^2.9.0"
   }

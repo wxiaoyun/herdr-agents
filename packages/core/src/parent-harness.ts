@@ -12,7 +12,7 @@ export interface ParentHarness {
   model?: () => string | undefined;
   thinking?: () => string | undefined;
   /** Put text in front of the parent conversation. */
-  deliver(text: string, notify: "followUp" | "passive"): void;
+  deliver(text: string, notify: "follow_up" | "passive"): void;
   /** Mark this session blocked (waiting for the parent) in herdr. */
   setBlocked(active: boolean, label?: string): void;
 }

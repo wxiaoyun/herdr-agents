@@ -48,7 +48,7 @@ Child ids are `<child harness>-<name>-<n>`, for example `claude-scout-2`, unique
 
 A child that stops on a startup dialog (Claude Code's folder trust prompt, a login) pauses until a person answers it in the pane. The parent never answers it. A foreground spawn keeps waiting, a background spawn returns `blocked` at once. The task prompt goes in once the child is idle and the report follows as usual. A child that exits during startup reports that and stays `idle` for `resume`.
 
-A child's turn ends in status `idle`: its pane stays open and it keeps its context. Continue it with `SendMessage` (background) or `Agent` with `resume` (blocks like a spawn). Close it with `KillAgent` or by ending the parent session. Set `closeOnDone: true` to close panes at the end of every turn instead.
+A child's turn ends in status `idle`: its pane stays open and it keeps its context. Continue it with `SendMessage` (background) or `Agent` with `resume` (blocks like a spawn). Close it with `KillAgent` or by ending the parent session. Set `close_on_done = true` to close panes at the end of every turn instead.
 
 ## Placement
 
@@ -79,7 +79,7 @@ The child's tab lands in the same `<label>-agents` workspace on the machine. Its
 | model                | `provider/id`, inherits parent when pi      | `anthropic/<id>` loses its prefix, bare ids pass through, other providers error     |
 | thinking             | `--thinking` as given                       | `--effort`, `off` and `minimal` become `low`                                       |
 | tools                | `--tools` plus the subagent tools           | `--tools` verbatim; builtin profiles are translated (`read` to `Read`, `find` to `Glob`, ...) |
-| permissions          | n/a                                         | `--permission-mode auto` (a classifier approves or denies each action, Opus 4.6+ and Sonnet 4.6+ only), `acceptEdits` for models without auto mode (Haiku, Sonnet and Opus up to 4.5). Profile tools also go to `--allowedTools`. Override via `claudeArgs`. `bypassPermissions` blocks startup on a confirmation |
+| permissions          | n/a                                         | `--permission-mode auto` (a classifier approves or denies each action, Opus 4.6+ and Sonnet 4.6+ only), `acceptEdits` for models without auto mode (Haiku, Sonnet and Opus up to 4.5). Profile tools also go to `--allowedTools`. Override via `claude_args`. `bypassPermissions` blocks startup on a confirmation |
 | native subagents     | none                                        | native `Agent`, `SendMessage`, `ListAgents` stay available, except for profiles that may not spawn (Scout) |
 | report into parent   | pi message queue (`notify` setting applies) | typed into the parent's pane as a user message (`notify` ignored)                   |
 | `expect_reply`       | herdr shows `blocked`                       | best effort, herdr's screen detection may override                                  |
@@ -110,26 +110,26 @@ Tool names in user profiles are passed to the child harness as written. Model an
 
 ## Settings
 
-`~/.pi/agent/herdr-agents.json` then `.pi/herdr-agents.json` (project wins), read by both parent harnesses:
+`~/.pi/agent/herdr-agents.toml` then `.pi/herdr-agents.toml` (project wins), read by both parent harnesses. Every key is optional, these are the defaults:
 
-```json
-{
-  "closeOnDone": false,
-  "maxConcurrent": 4,
-  "defaultTimeoutMs": 0,
-  "notify": "followUp",
-  "maxDepth": 2,
-  "defaultModel": null,
-  "piArgs": [],
-  "claudeArgs": []
-}
+```toml
+close_on_done = false
+max_concurrent = 4
+default_timeout_ms = 0
+notify = "follow_up"
+max_depth = 2
+# default_model = "provider/model"   # unset: inherit the parent model
+pi_args = []
+claude_args = []
 ```
 
-- `notify`: `followUp` injects the background report as a user message and triggers a turn, `passive` appends it for the next turn. pi parent only.
-- `maxConcurrent`: further spawns queue FIFO. Foreground spawns block, background ones return `queued`. Idle children hold no slot.
+An unknown key or a value of the wrong type is dropped and logged as `stage=settings_key`.
+
+- `notify`: `follow_up` injects the background report as a user message and triggers a turn, `passive` appends it for the next turn. pi parent only.
+- `max_concurrent`: further spawns queue FIFO. Foreground spawns block, background ones return `queued`. Idle children hold no slot.
 - Timeout returns the partial report with status `timeout` and leaves the child running.
 - Pressing esc during a foreground spawn detaches it: the child keeps running as background.
-- `piArgs` / `claudeArgs`: extra CLI args for every child of that harness, for example `["--no-skills"]` or `["--allowedTools", "Bash(git *)"]`.
+- `pi_args` / `claude_args`: extra CLI args for every child of that harness, for example `["--no-skills"]` or `["--allowedTools", "Bash(git *)"]`.
 
 Children carry `HERDR_AGENTS_PARENT`, `HERDR_AGENTS_DEPTH`, `HERDR_AGENTS_ID`, `HERDR_AGENTS_PROFILE` and `HERDR_AGENTS_HARNESS` in their environment.
 

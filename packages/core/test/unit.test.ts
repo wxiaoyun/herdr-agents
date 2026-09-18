@@ -255,18 +255,20 @@ describe("settings", () => {
     const cwd = tmp();
     const agentDir = tmp();
     writeFileSync(
-      join(agentDir, "herdr-agents.json"),
-      JSON.stringify({ maxConcurrent: 2, maxDepth: 5 }),
+      join(agentDir, "herdr-agents.toml"),
+      'max_concurrent = 2\nmax_depth = 5\ndefault_model = "x/y"\n',
     );
     mkdirSync(join(cwd, ".pi"));
+    // A wrong type and an unknown key are dropped, the rest of the file still counts.
     writeFileSync(
-      join(cwd, ".pi", "herdr-agents.json"),
-      JSON.stringify({ maxConcurrent: 7, claudeArgs: ["--verbose"] }),
+      join(cwd, ".pi", "herdr-agents.toml"),
+      'max_concurrent = 7\nclaude_args = ["--verbose"]\nmax_depth = "deep"\nmaxDepth = 9\nnope = 1\n',
     );
     expect(loadSettings(cwd, agentDir)).toEqual({
       ...DEFAULTS,
       maxConcurrent: 7,
       maxDepth: 5,
+      defaultModel: "x/y",
       claudeArgs: ["--verbose"],
     });
   });
@@ -912,7 +914,7 @@ describe("listing and busy children", () => {
     };
     const dir = tmp();
     mkdirSync(join(dir, ".pi"), { recursive: true });
-    writeFileSync(join(dir, ".pi", "herdr-agents.json"), JSON.stringify({ maxConcurrent: 1 }));
+    writeFileSync(join(dir, ".pi", "herdr-agents.toml"), "max_concurrent = 1\n");
     const tools = createTools(piStub(), () => dir, fake);
     const spawn = (name: string) =>
       tools.agent.execute({ prompt: "p", description: "d", name, run_in_background: true });

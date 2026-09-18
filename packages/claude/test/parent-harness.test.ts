@@ -33,7 +33,7 @@ describe("claude parent harness", () => {
         paneRun: async (_p, t) => { runs.push(t); },
       }),
     );
-    pHarness.deliver("hi", "followUp");
+    pHarness.deliver("hi", "follow_up");
     await tick();
     expect(runs).toEqual(["[herdr-agents delivery: agent output, not typed by the user]\nhi"]);
   });
