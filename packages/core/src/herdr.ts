@@ -1,7 +1,7 @@
 /**
  * herdr.ts: thin wrapper over the `herdr` CLI. Every command prints JSON on
- * stdout (success) or JSON on stderr (error). Optional file logging makes a
- * broken step searchable by stage without corrupting the TUI streams.
+ * stdout (success) or JSON on stderr (error). File logging makes a broken
+ * step searchable by stage without corrupting the TUI streams.
  *
  * A Machine child lives on another herdr server. Every command for it is
  * prefixed with `--machine <id>`, which herdr forwards over its SSH API
@@ -9,28 +9,55 @@
  * file of a Machine child is fetched with `ssh <target> cat`.
  */
 import { execFile, execFileSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "./paths.ts";
 
 export const LOG_ENV = "HERDR_AGENTS_LOG";
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const rotated = new Set<string>();
 
+/**
+ * On by default, to `<agent dir>/herdr-agents-debug.log`: a failure is only
+ * debuggable if the log already exists when it happens. `HERDR_AGENTS_LOG=0`
+ * turns it off, a file path redirects it.
+ */
 export const log = (
   stage: string,
   fields: Record<string, unknown> = {},
 ): void => {
   const configuredPath = process.env[LOG_ENV];
-  if (!configuredPath) return;
+  if (configuredPath === "0") return;
   const path =
-    configuredPath === "1"
+    !configuredPath || configuredPath === "1"
       ? join(getAgentDir(), "herdr-agents-debug.log")
       : configuredPath;
   try {
-    const kv = Object.entries(fields)
-      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-      .join(" ");
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, `[herdr-agents] stage=${stage} ${kv}\n`);
+    // ponytail: size is checked once per process and one old file is kept;
+    // a process that logs over the cap in one run grows past it.
+    if (!rotated.has(path)) {
+      rotated.add(path);
+      if (existsSync(path) && statSync(path).size > LOG_MAX_BYTES)
+        renameSync(path, `${path}.1`);
+    }
+    const kv = Object.entries(fields)
+      .map(([k, v]) => {
+        const j = JSON.stringify(v) ?? "undefined";
+        return `${k}=${j.length > 300 ? `${j.slice(0, 300)}...` : j}`;
+      })
+      .join(" ");
+    appendFileSync(
+      path,
+      `${new Date().toISOString()} [herdr-agents] pid=${process.pid} stage=${stage} ${kv}\n`,
+    );
   } catch {
     // Logging must never write to the TUI streams or break extension behavior.
   }

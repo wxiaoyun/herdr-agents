@@ -135,7 +135,13 @@ Children carry `HERDR_AGENTS_PARENT`, `HERDR_AGENTS_DEPTH`, `HERDR_AGENTS_ID`, `
 
 ## Debug logging
 
-Logging is disabled by default and never writes to stdout or stderr. Set `HERDR_AGENTS_LOG=1` to append logs to `~/.pi/agent/herdr-agents-debug.log`, or set it to a file path:
+Logging is on by default and never writes to stdout or stderr. Every parent harness, pi and Claude Code alike, appends to `~/.pi/agent/herdr-agents-debug.log` (under `PI_CODING_AGENT_DIR` when that is set). Each line has a timestamp, the process id and a `stage=` name, so one step is one search:
+
+```sh
+rg 'stage=(child_failed|agent_start_failed|premature_idle)' ~/.pi/agent/herdr-agents-debug.log
+```
+
+Long values are cut at 300 characters. A file over 5 MB is moved to `herdr-agents-debug.log.1` the next time a session starts. Set `HERDR_AGENTS_LOG=0` to turn logging off, or to a file path to write elsewhere:
 
 ```sh
 HERDR_AGENTS_LOG=/tmp/herdr-agents.log pi

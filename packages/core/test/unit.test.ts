@@ -55,23 +55,32 @@ const emptyHerdr = (): Herdr => ({
 });
 
 describe("logging", () => {
-  it("writes to the default or configured file", () => {
+  it("is on by default, rotates, truncates long values, and can be redirected or turned off", () => {
     const agentDir = tmp();
     const path = join(tmp(), "nested", "debug.log");
     const previousLog = process.env[LOG_ENV];
     const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
     process.env.PI_CODING_AGENT_DIR = agentDir;
     try {
-      process.env[LOG_ENV] = "1";
+      const line = (rest: string) =>
+        new RegExp(`^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z \\[herdr-agents\\] pid=${process.pid} ${rest}\\n$`);
+      const defaultPath = join(agentDir, "herdr-agents-debug.log");
+
+      process.env[LOG_ENV] = "0";
+      log("off");
+      expect(existsSync(defaultPath)).toBe(false);
+
+      // On by default, and an oversized file from an earlier run is set aside once.
+      delete process.env[LOG_ENV];
+      writeFileSync(defaultPath, "x".repeat(5 * 1024 * 1024 + 1));
       log("default");
-      expect(
-        readFileSync(join(agentDir, "herdr-agents-debug.log"), "utf8"),
-      ).toBe("[herdr-agents] stage=default \n");
+      expect(readFileSync(defaultPath, "utf8")).toMatch(line("stage=default "));
+      expect(existsSync(`${defaultPath}.1`)).toBe(true);
 
       process.env[LOG_ENV] = path;
-      log("test", { target: "/tmp/example", status: 200 });
-      expect(readFileSync(path, "utf8")).toBe(
-        '[herdr-agents] stage=test target="/tmp/example" status=200\n',
+      log("test", { target: "/tmp/example", status: 200, long: "y".repeat(400) });
+      expect(readFileSync(path, "utf8")).toMatch(
+        line(`stage=test target="/tmp/example" status=200 long="y{299}\\.\\.\\.`),
       );
     } finally {
       if (previousLog === undefined) delete process.env[LOG_ENV];

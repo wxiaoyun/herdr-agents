@@ -20,7 +20,7 @@ node test/e2e.ts
 | `E2E_MACHINE` | first enabled saved machine |
 | `E2E_CLAUDE_MODEL` | `claude-haiku-4-5` |
 | `E2E_PI_MODEL` | pi's default model |
-| `HERDR_AGENTS_LOG` | unset. Set a file path to log every herdr call |
+| `HERDR_AGENTS_LOG` | unset: every herdr call is logged to `~/.pi/agent/herdr-agents-debug.log`. Set a file path to log elsewhere, `0` to turn it off |
 
 It prints one `PASS` or `FAIL` line per check and exits non-zero on any failure. It takes about two minutes. Both children are killed at the end, even on failure.
 
