@@ -125,7 +125,7 @@ claude_args = []
 
 An unknown key or a value of the wrong type is dropped and logged as `stage=settings_key`.
 
-- `notify`: `follow_up` injects the background report as a user message and triggers a turn, `passive` appends it for the next turn. pi parent only.
+- `notify`: `follow_up` injects the background report as a user message and triggers a turn, `passive` appends it for the next turn. pi parent only. While the pi parent runs a turn the report is held until that turn is about to end, and dropped if the parent read it with `GetAgentResult` meanwhile.
 - `max_concurrent`: further spawns queue FIFO. Foreground spawns block, background ones return `queued`. Idle children hold no slot.
 - Timeout returns the partial report with status `timeout` and leaves the child running.
 - Pressing esc during a foreground spawn detaches it: the child keeps running as background.

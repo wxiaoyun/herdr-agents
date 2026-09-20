@@ -15,9 +15,11 @@ export default function (pi: ExtensionAPI) {
   let cwd = process.cwd();
   let model: string | undefined;
   let awaitingParent = false;
+  let busy = false;
 
   const pHarness: ParentHarness = {
     harness: "pi",
+    busy: () => busy,
     model: () => model,
     thinking: () => pi.getThinkingLevel(),
     deliver(text, notify) {
@@ -42,6 +44,26 @@ export default function (pi: ExtensionAPI) {
   });
 
   const tools = createTools(pHarness, () => cwd);
+
+  // pi drains follow-ups inside the same run once the loop would stop. A
+  // Report the agent already read with GetAgentResult would come back as a
+  // user message, and the agent's reply to it would replace its real Report.
+  // So Deliveries are held during the run and go in at its last turn, which
+  // pi awaits before it polls the follow-up queue.
+  const idle = () => {
+    busy = false;
+    tools.manager().flush();
+  };
+  pi.on("agent_start", () => {
+    busy = true;
+  });
+  pi.on("turn_start", () => {
+    busy = true;
+  });
+  pi.on("turn_end", (e) => {
+    if (!e.toolResults.length) idle();
+  });
+  pi.on("agent_end", idle);
 
   const snippets: Record<string, Partial<Parameters<typeof pi.registerTool>[0]>> = {
     Agent: {

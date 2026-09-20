@@ -13,6 +13,12 @@ export interface ParentHarness {
   thinking?: () => string | undefined;
   /** Put text in front of the parent conversation. */
   deliver(text: string, notify: "follow_up" | "passive"): void;
+  /**
+   * True while the parent runs a turn. The Manager then holds Deliveries until
+   * the parent harness calls `Manager.flush`, so a Report the parent reads
+   * meanwhile is not delivered a second time.
+   */
+  busy?: () => boolean;
   /** Mark this session blocked (waiting for the parent) in herdr. */
   setBlocked(active: boolean, label?: string): void;
 }

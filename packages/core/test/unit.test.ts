@@ -900,6 +900,25 @@ describe("machines and idle children", () => {
     await m.kill(a.id);
     expect(closed).toEqual(["w1:p9"]);
   });
+
+  it("holds a Delivery while the parent is busy and drops it once the Report is read", async () => {
+    const sent: string[] = [];
+    const fake: Herdr = {
+      ...emptyHerdr(),
+      agentPromptWait: async () => ({ status: "idle", pane: "w1:p9" }),
+    };
+    const m = new Manager({ ...piStub(), busy: () => true, deliver: (t) => sent.push(t) }, DEFAULTS, fake);
+    const read = await m.spawn({ ...base, background: true });
+    const unread = await m.spawn({ ...base, background: true });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sent).toHaveLength(0);
+    await m.result(read.id, false, 0);
+    m.flush();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain(unread.id);
+    m.flush();
+    expect(sent).toHaveLength(1);
+  });
 });
 
 describe("listing and busy children", () => {

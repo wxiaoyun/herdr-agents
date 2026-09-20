@@ -758,6 +758,8 @@ export class Manager {
     op: (signal: AbortSignal) => Promise<AgentInfo>,
   ): void {
     child.watcher?.abort();
+    // A new turn: its Delivery replaces a held one from the turn before.
+    this.held.delete(child);
     const ac = new AbortController();
     child.watcher = ac;
     void op(ac.signal)
@@ -879,8 +881,30 @@ export class Manager {
     return `${head}\n${body}${warn}${tail}`;
   }
 
+  /** Children whose Delivery waits for the parent's turn to end. */
+  private held = new Set<Child>();
+
   private deliver(child: Child): void {
+    if (this.pHarness.busy?.()) {
+      log("deliver_held", { id: child.id });
+      this.held.add(child);
+      return;
+    }
     this.pHarness.deliver(this.formatReport(child), this.settings.notify);
+  }
+
+  /** The parent has the Report in hand: a held Delivery would only repeat it. */
+  private read(child: Child): void {
+    if (this.held.delete(child)) log("deliver_dropped", { id: child.id });
+  }
+
+  /** Send every held Delivery. The parent harness calls this when its turn is about to end. */
+  flush(): void {
+    for (const child of this.held) {
+      log("deliver_flush", { id: child.id });
+      this.pHarness.deliver(this.formatReport(child), this.settings.notify);
+    }
+    this.held.clear();
   }
 
   // ---- inspect / message / kill ---------------------------------------------
@@ -900,11 +924,13 @@ export class Manager {
     ) {
       child.watcher?.abort();
       child.watcher = undefined;
+      this.read(child);
       return (await this.foreground(child, undefined, timeoutMs, signal)).text;
     }
     if (["idle", "done", "killed"].includes(child.status)) {
       // A Peer may have run turns since: reread the session instead of the stored report.
       if (child.status === "idle") child.report = await this.collect(child);
+      this.read(child);
       return this.formatReport(child);
     }
     const recent = await this.hFor(child)
