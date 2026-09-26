@@ -204,21 +204,24 @@ export class Manager {
   private readonly held = new Set<Child>();
   private readonly h: HerdrClient;
   private readonly parent: ParentHarnessShape;
-  private readonly settings: Settings;
+  private readonly readSettings: Effect.Effect<Settings>;
+  private slotCount: number;
   private readonly env: SessionEnv;
   private readonly slots: Semaphore.Semaphore;
 
   constructor(deps: {
     h: HerdrClient;
     parent: ParentHarnessShape;
-    settings: Settings;
+    settings: Effect.Effect<Settings>;
+    slotCount: number;
     env: SessionEnv;
     slots: Semaphore.Semaphore;
     watchers: FiberMap.FiberMap<string>;
   }) {
     this.h = deps.h;
     this.parent = deps.parent;
-    this.settings = deps.settings;
+    this.readSettings = deps.settings;
+    this.slotCount = deps.slotCount;
     this.env = deps.env;
     this.slots = deps.slots;
     this.watchers = deps.watchers;
@@ -227,19 +230,32 @@ export class Manager {
   /** Watchers live as long as the scope. */
   static readonly make: Effect.Effect<Manager, never, Herdr | ParentHarness | CurrentSettings | Scope.Scope> =
     Effect.gen(function* () {
-      const settings = yield* (yield* CurrentSettings).get;
+      const settings = (yield* CurrentSettings).get;
+      const { maxConcurrent } = yield* settings;
       return new Manager({
         h: yield* Herdr,
         parent: yield* ParentHarness,
         settings,
+        slotCount: maxConcurrent,
         env: yield* Effect.orDie(SessionEnv),
-        slots: yield* Semaphore.make(settings.maxConcurrent),
+        slots: yield* Semaphore.make(maxConcurrent),
         watchers: yield* FiberMap.make<string>(),
       });
     });
 
   list(): Child[] {
     return [...this.children.values()];
+  }
+
+  /** The settings files as they are now. A changed max_concurrent resizes the slots. */
+  private settings(): Effect.Effect<Settings> {
+    return this.readSettings.pipe(
+      Effect.tap((s) => {
+        if (s.maxConcurrent === this.slotCount) return Effect.void;
+        this.slotCount = s.maxConcurrent;
+        return log("slots_resized", { max: s.maxConcurrent }).pipe(Effect.andThen(this.slots.resize(s.maxConcurrent)));
+      }),
+    );
   }
 
   private ref(child: Child): string {
@@ -425,15 +441,16 @@ export class Manager {
     });
   }
 
-  private model(o: SpawnOpts): string | undefined {
-    return o.model ?? o.profile.model ?? this.settings.defaultModel ?? undefined;
+  private model(o: SpawnOpts, s: Settings): string | undefined {
+    return o.model ?? o.profile.model ?? s.defaultModel ?? undefined;
   }
 
   private launch(child: Child, o: SpawnOpts, session?: string): Effect.Effect<void, AgentError | HerdrError> {
     return Effect.gen({ self: this }, function* () {
       const h = this.hFor(child);
+      const s = yield* this.settings();
       child.status = "starting";
-      child.model = this.model(o);
+      child.model = this.model(o, s);
       const env = {
         // A Machine child cannot reach the parent's pane, so it gets no parent.
         [ENV_PARENT]: child.machine ? "" : this.env.pane,
@@ -462,14 +479,14 @@ export class Manager {
                   {
                     id: child.id,
                     profile: o.profile,
-                    model: this.model(o),
+                    model: this.model(o, s),
                     thinking: o.thinking ?? o.profile.thinking,
                     session,
                     stagedDir: staged,
                     stagedAs,
                     remote: !!child.machine,
                   },
-                  this.settings,
+                  s,
                 ),
               catch: (e) => new AgentError({ message: messageOf(e) }),
             });
@@ -645,8 +662,8 @@ export class Manager {
 
   spawn(o: SpawnOpts, abort: Effect.Effect<void> = Effect.never): Effect.Effect<SpawnResult, AgentError | HerdrError> {
     return Effect.gen({ self: this }, function* () {
-      if (o.depth > this.settings.maxDepth)
-        return yield* new AgentError({ message: `max nesting depth ${this.settings.maxDepth} reached` });
+      const s = yield* this.settings();
+      if (o.depth > s.maxDepth) return yield* new AgentError({ message: `max nesting depth ${s.maxDepth} reached` });
       if (o.resume) return yield* this.resume(o, abort);
 
       const machine = yield* this.machineFor(o.machine);
@@ -655,7 +672,7 @@ export class Manager {
         profile: o.profile.name,
         harness: o.harness,
         machine,
-        model: this.model(o),
+        model: this.model(o, s),
         description: o.description,
         background: o.background,
         status: "queued",
@@ -686,7 +703,7 @@ export class Manager {
           return {
             id: child.id,
             status: "queued",
-            text: `${child.id} queued with model ${child.model ?? "default"} (${this.settings.maxConcurrent}/${this.settings.maxConcurrent} slots busy)`,
+            text: `${child.id} queued with model ${child.model ?? "default"} (${s.maxConcurrent}/${s.maxConcurrent} slots busy)`,
           };
         }
         yield* this.acquire(child);
@@ -929,7 +946,7 @@ export class Manager {
       }
       child.report = yield* this.collect(child);
       child.timedOut = undefined;
-      const close = this.settings.closeOnDone && !child.peer;
+      const close = (yield* this.settings()).closeOnDone && !child.peer;
       child.status = close ? "closed" : "idle";
       yield* log("child_done", { id: child.id, usage: formatUsage(child.report.usage) });
       yield* this.release(child);
@@ -1042,7 +1059,8 @@ export class Manager {
         this.held.add(child);
         return log("deliver_held", { id: child.id });
       }
-      return this.parent.deliver(this.formatReport(child), this.settings.notify);
+      const report = this.formatReport(child);
+      return this.settings().pipe(Effect.flatMap((s) => this.parent.deliver(report, s.notify)));
     });
   }
 
@@ -1053,17 +1071,15 @@ export class Manager {
 
   /** Send every held Delivery. The parent harness calls this when its turn is about to end. */
   flush(): Effect.Effect<void> {
-    return Effect.suspend(() => {
+    return Effect.gen({ self: this }, function* () {
       const held = [...this.held];
       this.held.clear();
-      return Effect.forEach(
-        held,
-        (child) =>
-          log("deliver_flush", { id: child.id }).pipe(
-            Effect.andThen(this.parent.deliver(this.formatReport(child), this.settings.notify)),
-          ),
-        { discard: true },
-      );
+      if (!held.length) return;
+      const { notify } = yield* this.settings();
+      for (const child of held) {
+        yield* log("deliver_flush", { id: child.id });
+        yield* this.parent.deliver(this.formatReport(child), notify);
+      }
     });
   }
 
@@ -1099,6 +1115,7 @@ export class Manager {
     return Effect.gen({ self: this }, function* () {
       const { child, machine, ref } = yield* this.target(to);
       const h = this.hFor({ machine });
+      const { defaultTimeoutMs } = yield* this.settings();
       if (kind === "keys") return yield* h.sendKeys(ref, message.split(/\s+/).filter(Boolean));
       if (kind === "interrupt") {
         yield* h.sendKeys(ref, ["esc"]);
@@ -1110,7 +1127,7 @@ export class Manager {
         child.status = "running";
         child.background = true;
         yield* this.acquire(child);
-        yield* this.fork(child, this.promptWatch(child, message, this.settings.defaultTimeoutMs));
+        yield* this.fork(child, this.promptWatch(child, message, defaultTimeoutMs));
         return;
       }
       yield* h.agentPrompt(ref, message).pipe(
@@ -1128,7 +1145,7 @@ export class Manager {
           Effect.catch((e) => log("unblock_wait", { to, error: e.message })),
         );
         child.status = "running";
-        if (child.background) yield* this.fork(child, this.waitWatch(child, this.settings.defaultTimeoutMs));
+        if (child.background) yield* this.fork(child, this.waitWatch(child, defaultTimeoutMs));
       }
     });
   }

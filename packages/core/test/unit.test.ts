@@ -212,6 +212,29 @@ describe("settings", () => {
   );
 });
 
+describe("live settings", () => {
+  it.effect("reads the settings files at each use, so an edit applies without a restart", () =>
+    Effect.gen(function* () {
+      const dir = tmp();
+      mkdirSync(join(dir, ".pi"));
+      const write = (toml: string) => writeFileSync(join(dir, ".pi", "herdr-agents.toml"), toml);
+      write("max_concurrent = 1\n");
+      const m = yield* manager({
+        settings: undefined,
+        parent: { cwd: () => dir },
+        herdr: { ...emptyHerdr(), agentPromptWait: () => Effect.never },
+      });
+      const opts = { ...base, background: true };
+      expect((yield* m.spawn(opts)).status).toBe("running");
+      expect((yield* m.spawn(opts)).status).toBe("queued");
+      write("max_concurrent = 3\n");
+      expect((yield* m.spawn(opts)).status).toBe("running");
+      write("max_depth = 0\n");
+      expect((yield* Effect.flip(m.spawn(opts))).message).toContain("max nesting depth 0");
+    }),
+  );
+});
+
 describe("profile prompt staging", () => {
   it.effect("passes multi-line prompts as a temp file and cleans it up", () =>
     Effect.gen(function* () {
