@@ -803,6 +803,76 @@ describe("listing and busy children", () => {
   );
 });
 
+describe("timeouts", () => {
+  /** A child whose turns run until the test ends them. `waiting` yields once per herdr wait. */
+  const slowTurns = Effect.gen(function* () {
+    const turnEnds = yield* Deferred.make<void>();
+    const waiting = yield* Queue.unbounded<void>();
+    const out = yield* deliveries;
+    const turn = () =>
+      Queue.offer(waiting, undefined).pipe(
+        Effect.andThen(Deferred.await(turnEnds)),
+        Effect.as({ status: "idle", pane: "w1:p9" } as AgentInfo),
+      );
+    const herdr: HerdrClient = { ...emptyHerdr(), agentPromptWait: turn, agentWait: turn };
+    return { turnEnds, waiting, out, herdr, end: Deferred.succeed(turnEnds, undefined) };
+  });
+
+  it.effect("a foreground timeout detaches: the slot stays taken until the turn ends, then the report arrives", () =>
+    Effect.gen(function* () {
+      const t = yield* slowTurns;
+      const m = yield* manager({ settings: { maxConcurrent: 1 }, parent: { deliver: t.out.deliver }, herdr: t.herdr });
+      const spawn = yield* Effect.forkChild(m.spawn({ ...base, timeoutMs: 1000 }));
+      yield* Queue.take(t.waiting);
+      yield* TestClock.adjust("1 second");
+      const r = yield* Fiber.join(spawn);
+      expect(r.status).toBe("detached");
+      expect(r.text).toContain("timed out after 1000 ms: this is a partial report");
+      expect(m.children.get(r.id)?.status).toBe("running");
+      // Its slot is still taken, so the next child waits in line.
+      const next = yield* m.spawn({ ...base, background: true });
+      expect(next.status).toBe("queued");
+      yield* m.kill(next.id);
+      yield* t.end;
+      const report = yield* t.out.next;
+      expect(report).toContain(`[subagent ${r.id}`);
+      expect(report).not.toContain("partial report");
+      expect(m.children.get(r.id)?.status).toBe("idle");
+    }),
+  );
+
+  it.effect("a background timeout delivers a partial report, then the final one", () =>
+    Effect.gen(function* () {
+      const t = yield* slowTurns;
+      const m = yield* manager({ parent: { deliver: t.out.deliver }, herdr: t.herdr });
+      const b = yield* m.spawn({ ...base, background: true, timeoutMs: 1000 });
+      yield* Queue.take(t.waiting);
+      yield* TestClock.adjust("1 second");
+      expect(yield* t.out.next).toContain("partial report");
+      expect(m.children.get(b.id)?.status).toBe("running");
+      yield* t.end;
+      expect(yield* t.out.next).not.toContain("partial report");
+      expect(m.children.get(b.id)?.status).toBe("idle");
+    }),
+  );
+
+  it.effect("a GetAgentResult wait that runs out leaves the Delivery in place", () =>
+    Effect.gen(function* () {
+      const t = yield* slowTurns;
+      const m = yield* manager({ parent: { deliver: t.out.deliver }, herdr: t.herdr });
+      const b = yield* m.spawn({ ...base, background: true });
+      yield* Queue.take(t.waiting);
+      const result = yield* Effect.forkChild(m.result(b.id, true, 1000));
+      yield* Queue.take(t.waiting);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(result)).toContain("partial report");
+      yield* t.end;
+      expect(yield* t.out.next).toContain(`[subagent ${b.id}`);
+      expect(m.children.get(b.id)?.status).toBe("idle");
+    }),
+  );
+});
+
 describe("tool schemas", () => {
   it.effect("pi's validator accepts each tool's JSON Schema, and a bad call is an error result", () =>
     Effect.gen(function* () {

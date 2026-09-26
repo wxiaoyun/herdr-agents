@@ -48,7 +48,6 @@ export type AgentStatus =
   | "blocked"
   | "idle"
   | "closed"
-  | "timeout"
   | "killed"
   | "unknown";
 
@@ -82,6 +81,8 @@ export interface Child {
   ref?: string;
   /** A Peer this session Resumed: gets Delivery, is never killed or relaunched. */
   peer?: boolean;
+  /** Set while `report` is a partial one taken when a wait of this many ms ran out. */
+  timedOut?: number;
 }
 
 export interface AgentEntry {
@@ -798,8 +799,15 @@ export class Manager {
         };
       }
       const r = waited.value;
+      if (Result.isFailure(r) && isHerdrCode(r.failure, "timeout")) {
+        // The wait ends, the turn goes on: Detached by time.
+        yield* this.partial(child, timeoutMs);
+        child.background = true;
+        const text = this.formatReport(child);
+        yield* this.fork(child, this.waitWatch(child, 0));
+        return { id: child.id, status: "detached", text };
+      }
       if (Result.isSuccess(r)) yield* this.finish(child, r.success);
-      else if (isHerdrCode(r.failure, "timeout")) yield* this.timeout(child);
       // herdr gave up observing a transition, but the child may have finished already.
       else if (!(yield* this.stalledToFinish(child, r.failure))) return yield* yield* this.lost(child, r.failure);
       return { id: child.id, status: child.status, text: this.formatReport(child) };
@@ -877,7 +885,10 @@ export class Manager {
     return this.watcher(child, this.hFor(child).agentWait(this.ref(child)), timeoutMs);
   }
 
-  /** Wait for the turn to end, record how it ended, deliver the Report. */
+  /**
+   * Wait for the turn to end, record how it ended, deliver the Report. When
+   * the wait runs out first, deliver what there is and keep waiting.
+   */
   private watcher(
     child: Child,
     op: Effect.Effect<AgentInfo, AgentError | HerdrError>,
@@ -889,8 +900,12 @@ export class Manager {
       const r = yield* Effect.result(
         withTimeout(op, timeoutMs).pipe(Effect.flatMap((info) => this.settled(child, info, 0))),
       );
+      if (Result.isFailure(r) && isHerdrCode(r.failure, "timeout")) {
+        yield* this.partial(child, timeoutMs);
+        yield* this.deliver(child);
+        return yield* this.waitWatch(child, 0);
+      }
       if (Result.isSuccess(r)) yield* this.finish(child, r.success);
-      else if (isHerdrCode(r.failure, "timeout")) yield* this.timeout(child);
       else if (!(yield* this.stalledToFinish(child, r.failure))) yield* this.lost(child, r.failure);
       yield* this.deliver(child);
     });
@@ -913,6 +928,7 @@ export class Manager {
         return;
       }
       child.report = yield* this.collect(child);
+      child.timedOut = undefined;
       const close = this.settings.closeOnDone && !child.peer;
       child.status = close ? "closed" : "idle";
       yield* log("child_done", { id: child.id, usage: formatUsage(child.report.usage) });
@@ -921,11 +937,12 @@ export class Manager {
     });
   }
 
-  private timeout(child: Child): Effect.Effect<void> {
+  /** A wait ran out while the turn goes on: keep what the child has so far. */
+  private partial(child: Child, ms: number): Effect.Effect<void> {
     return Effect.gen({ self: this }, function* () {
-      child.status = "timeout";
       child.report = yield* this.collect(child);
-      yield* log("child_timeout", { id: child.id });
+      child.timedOut = ms;
+      yield* log("child_timeout", { id: child.id, ms });
     });
   }
 
@@ -933,6 +950,7 @@ export class Manager {
     return Effect.gen({ self: this }, function* () {
       yield* log("child_failed", { id: child.id, error: messageOf(e) });
       child.status = "killed";
+      child.timedOut = undefined;
       child.report = {
         text: `failed: ${messageOf(e)}`,
         usage: { input: 0, output: 0, cost: 0, turns: 0 },
@@ -1004,6 +1022,8 @@ export class Manager {
     const r = child.report;
     const head = `[${this.who(child)}${r ? ` | ${formatStats(r)}` : ""}]`;
     const body = r ? r.text || "(no assistant text in the latest turn)" : "(no output)";
+    if (child.timedOut !== undefined)
+      return `${head}\n${body}\n(timed out after ${child.timedOut} ms: this is a partial report. ${child.id} keeps running, its final report arrives as a message)`;
     const warn = abnormalStop(r)
       ? `\n(the turn did not finish normally: stop=${r!.stop}${r!.error ? `, ${r!.error}` : ""}${r!.stop === "length" || r!.stop === "max_tokens" ? ", the response was truncated at the output limit" : ""})`
       : "";
@@ -1057,7 +1077,7 @@ export class Manager {
   ): Effect.Effect<string, AgentError | HerdrError> {
     return Effect.gen({ self: this }, function* () {
       const child = this.lookup(id) ?? (yield* this.peer(id));
-      if (wait && (child.status === "running" || child.status === "blocked" || child.status === "timeout")) {
+      if (wait && (child.status === "running" || child.status === "blocked")) {
         yield* FiberMap.remove(this.watchers, child.id);
         yield* this.read(child);
         return (yield* this.foreground(child, undefined, timeoutMs, abort)).text;

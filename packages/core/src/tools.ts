@@ -98,7 +98,11 @@ const AgentParams = Schema.Struct({
     ),
   ),
   timeout_ms: Schema.optionalKey(
-    Schema.Int.annotate(d("0 = no timeout. On timeout returns partial output, child keeps running.")),
+    Schema.Int.annotate(
+      d(
+        "0 = no timeout. When it runs out the wait ends, never the child: a foreground call returns a partial report and detaches, a background child delivers a partial report, and either way the final report arrives as a message when the turn ends.",
+      ),
+    ),
   ),
 });
 
