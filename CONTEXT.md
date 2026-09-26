@@ -43,7 +43,7 @@ An agent's final assistant text plus usage totals for its latest turn. Any agent
 _Avoid_: result, output, summary
 
 **Delivery**:
-Pushing a Report to the agent that started the turn, when the turn ends. A spawn or a Resume gets Delivery. A Message does not, except that a Message to an Idle Child counts as a Resume.
+Pushing a Report to the agent that started the turn, when the turn ends. A background turn that outlives its timeout also gets an early Delivery of its partial Report. A spawn or a Resume gets Delivery. A Message does not, except that a Message to an Idle Child counts as a Resume.
 
 **Blocked**:
 herdr state meaning an agent is waiting on input from a person or another agent. Reached by a permission prompt or by `expect_reply`.
@@ -55,16 +55,31 @@ Whether the agent that started a turn waits. Foreground: it waits for the Report
 The herdr workspace holding every Child's tab, on the Child's Machine. Derived from the parent's workspace label by a fixed rule, and a Child workspace maps to itself, so grandchildren land in the same one.
 _Avoid_: placement, split
 
+**Queued**:
+A Child waiting for a concurrency slot. It has no pane yet.
+
+**Running**:
+An agent in a turn. A Running Child holds a concurrency slot.
+_Avoid_: working, busy
+
 **Idle**:
 An agent whose turn finished and whose pane stays open. Holds no concurrency slot and can be Resumed. The default end state of a turn.
 _Avoid_: done, finished, alive
 
+**Closed**:
+A Child whose turn finished and whose pane was then shut because `close_on_done` is set. Resumed by relaunching from its session.
+_Avoid_: done
+
+**Killed**:
+A Child its Parent killed, or one whose launch or wait failed. Holds no concurrency slot.
+
 **Resume**:
-Giving an Idle Child or Peer a new prompt. Starts a new turn that ends in Delivery of its Report to the resumer. A working or Blocked agent cannot be Resumed, only messaged. If a Child's pane is gone, its Parent relaunches it from its session first. A Peer is never relaunched.
+Giving an Idle Child or Peer a new prompt. Starts a new turn that ends in Delivery of its Report to the resumer. A Running or Blocked agent cannot be Resumed, only messaged. If a Child's pane is gone, its Parent relaunches it from its session first. A Peer is never relaunched.
 _Avoid_: reuse, continue, follow-up, adopt
 
 **Detached**:
-A foreground child the parent stopped waiting on. It continues as a background child.
+A foreground child the parent stopped waiting on, because the parent aborted or the timeout passed. It continues as a background child.
+_Avoid_: timed out (a timeout ends the wait, never the child)
 
 **Stalled**:
 A child whose turn finished before herdr observed it working. Recovered by checking the session file.
