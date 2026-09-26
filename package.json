@@ -14,9 +14,8 @@
     "herdr-agents-mcp": "./packages/claude/bin/herdr-agents-mcp.ts"
   },
   "scripts": {
-    "prepare": "effect-language-service patch",
     "test": "vitest run --dir packages",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-language-service patch >/dev/null && tsc --noEmit",
     "lint": "biome check packages/"
   },
   "devDependencies": {

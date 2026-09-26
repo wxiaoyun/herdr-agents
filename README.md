@@ -160,4 +160,4 @@ npm run typecheck
 npm run lint
 ```
 
-The core runs on [Effect](https://effect.website) v4, see [ADR 0001](docs/adr/0001-effect-v4-core.md). `npm install` patches the local TypeScript with the Effect language service, so `npm run typecheck` also reports Effects that are created but never run.
+The core runs on [Effect](https://effect.website) v4, see [ADR 0001](docs/adr/0001-effect-v4-core.md). `npm run typecheck` first patches the local TypeScript with the Effect language service, so it also reports Effects that are created but never run.

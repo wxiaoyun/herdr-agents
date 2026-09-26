@@ -7,7 +7,7 @@ The effectful core (the herdr client, settings and env, logging, the Manager and
 - Pure parsers (session JSONL, CLI args, report formatting) stay plain functions. The pi extension and the Claude MCP server keep a Promise boundary, bridged by one `ManagedRuntime` per process.
 - Nothing imports `effect/unstable/*`. Those modules can break in minor releases and move to stable paths without compatibility exports. Process spawning and file reads go through `node:child_process` and `node:fs` wrapped in Effect instead of the unstable platform modules.
 - Every `effect` and `@effect/*` package is bumped together, to one exact version, after reading the changelog, the same way pi is bumped. `deps/effect` holds the matching source.
-- `@effect/language-service` patches the local TypeScript on install so `npm run typecheck` fails on a floating Effect.
+- `npm run typecheck` patches the local TypeScript with `@effect/language-service` first, so it fails on a floating Effect. Not on install: the pi package install omits dev dependencies, the patcher among them.
 
 ## Considered Options
 
