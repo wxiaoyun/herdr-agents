@@ -45,11 +45,11 @@ let rid: string | undefined;
 try {
   const local = await A.agent.execute({ prompt: reply("PONG-1"), description: "e2e local pi", harness: "pi", ...(piModel ? { model: piModel } : {}), name: "e2e" });
   check("A spawns a local pi child", has(local, "PONG-1"), local.text);
+  if (!local.isError) lid = local.details?.id as string;
   const remote = await A.agent.execute({ prompt: reply("PONG-2"), description: "e2e remote claude", harness: "claude", machine, cwd: "~", model: claudeModel, name: "e2e" });
   check(`A spawns a claude child on ${machine}`, has(remote, "PONG-2"), remote.text);
-  if (local.isError || remote.isError) throw new Error("spawn failed, later checks need both children");
-  lid = local.details?.id as string;
-  rid = `${machine}/${remote.details?.id}`;
+  if (!remote.isError) rid = `${machine}/${remote.details?.id}`;
+  if (!lid || !rid) throw new Error("spawn failed, later checks need both children");
 
   const line = (r: ToolResult, id: string) => r.text.split("\n").filter((l) => l.startsWith(`${id}  `));
   const aList = await A.list.execute({});
