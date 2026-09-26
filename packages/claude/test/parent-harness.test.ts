@@ -73,6 +73,25 @@ describe("mcp server", () => {
     await expect(h({ jsonrpc: "2.0", id: 4, method: "nope" })).rejects.toMatchObject({ code: -32601 });
   });
 
+  it("a cancelled call aborts the tool's signal and gets no response", async () => {
+    let signal: AbortSignal | undefined;
+    const t: any = {
+      name: "Agent",
+      description: "d",
+      parameters: { type: "object" },
+      execute: (_p: unknown, s: AbortSignal) => {
+        signal = s;
+        return new Promise((r) => s.addEventListener("abort", () => r({ text: "detached" })));
+      },
+    };
+    const h = handler({ all: [t] });
+    const call = h({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "Agent", arguments: {} } });
+    expect(signal?.aborted).toBe(false);
+    expect(await h({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 7 } })).toBeUndefined();
+    expect(signal?.aborted).toBe(true);
+    expect(await call).toBeUndefined();
+  });
+
   it("runs under plain node over stdio", async () => {
     const bin = fileURLToPath(new URL("../bin/herdr-agents-mcp.ts", import.meta.url));
     const p = spawn("node", [bin], { env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "w0:p0" } });

@@ -1,6 +1,8 @@
 /**
  * Minimal MCP stdio server (JSON-RPC 2.0, newline delimited). Only what
- * Claude Code needs: initialize, tools/list, tools/call, ping.
+ * Claude Code needs: initialize, tools/list, tools/call, ping, and
+ * notifications/cancelled, which detaches a foreground child the way an
+ * abort does in pi.
  */
 import { createInterface } from "node:readline";
 import { createTools, logNow, type Tools } from "@herdr-agents/core";
@@ -15,8 +17,10 @@ interface Rpc {
   params?: any;
 }
 
+/** Answers one message. Resolves undefined when nothing must be sent back. */
 export function handler(tools: Pick<Tools, "all">) {
   const byName = new Map(tools.all.map((t) => [t.name, t]));
+  const running = new Map<number | string, AbortController>();
   return async (msg: Rpc): Promise<unknown | undefined> => {
     switch (msg.method) {
       case "initialize":
@@ -38,8 +42,22 @@ export function handler(tools: Pick<Tools, "all">) {
       case "tools/call": {
         const t = byName.get(msg.params?.name);
         if (!t) throw Object.assign(new Error(`unknown tool ${msg.params?.name}`), { code: -32602 });
-        const r = await t.execute(msg.params?.arguments ?? {});
-        return { content: [{ type: "text", text: r.text }], isError: r.isError ?? false };
+        const ac = new AbortController();
+        if (msg.id != null) running.set(msg.id, ac);
+        try {
+          const r = await t.execute(msg.params?.arguments ?? {}, ac.signal);
+          // The client has given up on a cancelled request: it gets no response.
+          if (ac.signal.aborted) return undefined;
+          return { content: [{ type: "text", text: r.text }], isError: r.isError ?? false };
+        } finally {
+          if (msg.id != null) running.delete(msg.id);
+        }
+      }
+      case "notifications/cancelled": {
+        const id = msg.params?.requestId;
+        logNow("rpc_cancelled", { id, running: running.has(id), reason: msg.params?.reason });
+        running.get(id)?.abort();
+        return undefined;
       }
       default:
         if (msg.id === undefined) return undefined; // notification
@@ -62,7 +80,7 @@ export function serve(tools: Pick<Tools, "all">): void {
     }
     try {
       const result = await handle(msg);
-      if (msg.id !== undefined && msg.id !== null) write({ jsonrpc: "2.0", id: msg.id, result });
+      if (msg.id != null && result !== undefined) write({ jsonrpc: "2.0", id: msg.id, result });
     } catch (e: any) {
       logNow("rpc_error", { method: msg.method, error: String(e) });
       if (msg.id !== undefined && msg.id !== null)
