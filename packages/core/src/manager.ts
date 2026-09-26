@@ -10,7 +10,15 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Clock, Config, Data, Effect, FiberMap, Option, Result, type Scope, Semaphore } from "effect";
 import { childArgs } from "./args.ts";
-import { type AgentInfo, Herdr, type HerdrClient, HerdrError, isHerdrCode, type Machine } from "./herdr.ts";
+import {
+  type AgentInfo,
+  Herdr,
+  type HerdrClient,
+  HerdrError,
+  type HerdrStatus,
+  isHerdrCode,
+  type Machine,
+} from "./herdr.ts";
 import { log } from "./log.ts";
 import { type Harness, ParentHarness, type ParentHarnessShape } from "./parent-harness.ts";
 import { claudeDir } from "./paths.ts";
@@ -32,16 +40,24 @@ export class AgentError extends Data.TaggedError("AgentError")<{ readonly messag
 /** The text of any failure, for a tool result. */
 export const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-export type ChildStatus =
+/** One vocabulary for every agent, Child or Peer. See CONTEXT.md. */
+export type AgentStatus =
   | "queued"
   | "starting"
   | "running"
   | "blocked"
   | "idle"
-  | "done"
+  | "closed"
   | "timeout"
   | "killed"
   | "unknown";
+
+/**
+ * herdr's state in this project's words. herdr `done` is a finished turn
+ * nobody has looked at yet: as good as idle.
+ */
+export const statusOf = (s: HerdrStatus): AgentStatus =>
+  s === "working" ? "running" : s === "done" ? "idle" : s;
 
 export interface Child {
   id: string;
@@ -55,7 +71,7 @@ export interface Child {
   description: string;
   pane?: string;
   background: boolean;
-  status: ChildStatus;
+  status: AgentStatus;
   sessionPath?: string;
   sessionId?: string;
   report?: Report;
@@ -74,7 +90,7 @@ export interface AgentEntry {
   relation: "parent" | "child" | "peer";
   /** Harness herdr detected, e.g. pi, claude, codex. */
   harness?: string;
-  status: string;
+  status: AgentStatus;
   cwd?: string;
   machine?: Machine;
   child?: Child;
@@ -102,7 +118,7 @@ export interface SpawnOpts {
 
 export interface SpawnResult {
   id: string;
-  status: ChildStatus | "detached";
+  status: AgentStatus | "detached";
   text: string;
 }
 
@@ -285,7 +301,7 @@ export class Manager {
             id,
             relation: child ? "child" : !machine && a.pane === this.env.parent ? "parent" : "peer",
             harness: a.harness,
-            status: child?.status ?? a.status,
+            status: child?.status ?? statusOf(a.status),
             cwd: a.cwd,
             machine,
             child,
@@ -329,7 +345,7 @@ export class Manager {
         cwd: info.cwd,
         pane: info.pane,
         background,
-        status: info.status === "working" ? "running" : info.status,
+        status: statusOf(info.status),
         sessionId: info.sessionId,
         sessionPath: harness
           ? (info.sessionPath ??
@@ -740,8 +756,7 @@ export class Manager {
         return yield* new AgentError({
           message: `${p.id} runs ${p.harness}; only pi and claude peers can be resumed, SendMessage it instead`,
         });
-      // herdr `done` is a finished turn nobody has looked at yet: as good as idle.
-      if (p.status !== "idle" && p.status !== "done")
+      if (p.status !== "idle")
         return yield* new AgentError({
           message: `${p.id} is ${p.status}; only an idle peer can be resumed, SendMessage it instead`,
         });
@@ -899,7 +914,7 @@ export class Manager {
       }
       child.report = yield* this.collect(child);
       const close = this.settings.closeOnDone && !child.peer;
-      child.status = close ? "done" : "idle";
+      child.status = close ? "closed" : "idle";
       yield* log("child_done", { id: child.id, usage: formatUsage(child.report.usage) });
       yield* this.release(child);
       if (close) yield* this.closePane(child);
@@ -1047,7 +1062,7 @@ export class Manager {
         yield* this.read(child);
         return (yield* this.foreground(child, undefined, timeoutMs, abort)).text;
       }
-      if (["idle", "done", "killed"].includes(child.status)) {
+      if (["idle", "closed", "killed"].includes(child.status)) {
         // A Peer may have run turns since: reread the session instead of the stored report.
         if (child.status === "idle") child.report = yield* this.collect(child);
         yield* this.read(child);

@@ -308,7 +308,7 @@ describe("prompt-wait stall recovery", () => {
         },
       });
       const r = yield* m.spawn(base);
-      expect(r.status).toBe("done");
+      expect(r.status).toBe("closed");
       expect(r.text).toContain("final answer");
       expect(closed).toEqual(["w1:p9"]); // no stranded pane
     }),
@@ -469,7 +469,7 @@ describe("peers", () => {
               { status: "working", pane: "w1:p1", harness: "claude" },
               { status: "idle", pane: "w1:p2", harness: "pi" },
               { status: "idle", pane: "w1:p3", name: childId, harness: "pi" },
-              { status: "idle", pane: "w1:p4", harness: "pi", sessionPath: f },
+              { status: "done", pane: "w1:p4", harness: "pi", sessionPath: f },
             ]),
           agentGet: (ref) => Effect.succeed({ status: "idle", pane: ref, harness: "pi", sessionPath: f }),
           agentPromptWait: (ref, text) =>
@@ -480,11 +480,11 @@ describe("peers", () => {
         },
       });
       childId = (yield* m.spawn(base)).id;
-      expect((yield* m.agents()).map((a) => `${a.id} ${a.relation}`)).toEqual([
-        "w1:p2 parent",
-        `${childId} child`,
-        "w1:p4 peer",
-        "box/w1:p1 peer",
+      expect((yield* m.agents()).map((a) => `${a.id} ${a.relation} ${a.status}`)).toEqual([
+        "w1:p2 parent idle",
+        `${childId} child closed`,
+        "w1:p4 peer idle",
+        "box/w1:p1 peer running",
       ]);
       const r = yield* m.spawn({ ...base, prompt: "review", resume: "w1:p4" });
       expect(r.text).toContain("[peer w1:p4 | pi | idle");

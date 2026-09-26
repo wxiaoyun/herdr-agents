@@ -126,7 +126,7 @@ const ListParams = Schema.Struct({
   status: Schema.optionalKey(
     Schema.String.annotate(
       d(
-        "Only agents with this status, e.g. running, queued, idle, blocked, killed. Killed children whose pane is gone are listed only when asked for with status=killed.",
+        "Only agents with this status: queued, starting, running, blocked, idle, closed, killed or unknown. Killed children whose pane is gone are listed only when asked for with status=killed.",
       ),
     ),
   ),
