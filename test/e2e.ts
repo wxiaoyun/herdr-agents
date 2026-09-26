@@ -72,7 +72,7 @@ try {
   await nap(1500);
   const busy = await B.agent.execute({ prompt: "x", description: "e2e", resume: lid });
   check("B cannot resume a busy peer", !!busy.isError && busy.text.includes("only an idle peer"), busy.text);
-  herdr("agent", "wait", lid, "--until", "idle", "--timeout", "180000");
+  herdr("agent", "wait", lid, "--until", "idle", "--until", "done", "--timeout", "180000");
 
   // The pi child uses its own extension: it must see this session as parent and reach the remote agent.
   const self = await A.agent.execute({
