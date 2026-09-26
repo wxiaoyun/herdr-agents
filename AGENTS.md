@@ -11,10 +11,10 @@ Source for pi, herdr and Effect lives in `deps/` as shallow git submodules, pinn
 
 At the start of any task that touches pi, herdr or Effect behaviour, check for newer releases and bump before building on stale APIs:
 
-- pi: compare `npm view @earendil-works/pi-coding-agent version` with the version in `package.json`. To bump, set `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` to the new version, run `npm install`, and move `deps/pi` to the matching `v<version>` tag.
+- pi: compare `npm view @earendil-works/pi-coding-agent version` with the version in `package.json`. To bump, set `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` to the new version, run `bun install`, and move `deps/pi` to the matching `v<version>` tag.
 - herdr: compare `git -C deps/herdr log -1` with `git ls-remote https://github.com/herdrdev/herdr.git HEAD` and the locally installed `herdr --version`. Move `deps/herdr` to the commit or release the local build runs, never ahead of it.
-- Effect: compare `npm view effect dist-tags.rc` with the version in `packages/core/package.json`. To bump, set `effect`, `@effect/vitest` and every other `@effect/*` package except `@effect/language-service` to the same exact version, run `npm install`, and move `deps/effect` to the matching `effect@<version>` tag. Check `@effect/language-service` for a newer version at the same time.
-- Before committing a bump, read the dependency's changelog between the old and new version for breaking changes, then run `npm run typecheck`, `npm test` and the end-to-end check. Commit the bump on its own, with `package.json`, `package-lock.json` and the submodule together.
+- Effect: compare `npm view effect dist-tags.rc` with the version in `packages/core/package.json`. To bump, set `effect`, `@effect/vitest` and every other `@effect/*` package except `@effect/language-service` to the same exact version, run `bun install`, and move `deps/effect` to the matching `effect@<version>` tag. Check `@effect/language-service` for a newer version at the same time.
+- Before committing a bump, read the dependency's changelog between the old and new version for breaking changes, then run `bun run typecheck`, `bun run test` and the end-to-end check. Commit the bump on its own, with `package.json`, `bun.lock` and the submodule together.
 
 To move a pin: `git -C deps/<name> fetch --depth 1 origin <tag or commit> && git -C deps/<name> checkout FETCH_HEAD`, then commit the submodule change.
 
@@ -24,4 +24,4 @@ Unit tests run on `@effect/vitest`. Build a Manager or the tools with the helper
 
 ## End-to-end check
 
-After changing how agents are spawned, listed, messaged, resumed or killed, run the live check in [docs/e2e.md](docs/e2e.md) (`node test/e2e.ts`) in addition to `npm test`.
+After changing how agents are spawned, listed, messaged, resumed or killed, run the live check in [docs/e2e.md](docs/e2e.md) (`node test/e2e.ts`) in addition to `bun run test`.

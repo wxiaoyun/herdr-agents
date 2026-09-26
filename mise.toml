@@ -1,0 +1,13 @@
+[tools]
+bun = "1.4.2"
+node = "26"
+
+[tasks."mcp:install"]
+description = "Register the MCP server with Claude Code, user scope. Defaults to pi's git install, HERDR_AGENTS_DIR overrides"
+run = """
+dir="${HERDR_AGENTS_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/github.com/wxiaoyun/herdr-agents}"
+bin="$dir/packages/claude/bin/herdr-agents-mcp.ts"
+[ -f "$bin" ] || { echo "mcp:install: not found: $bin" >&2; exit 1; }
+claude mcp remove -s user herdr >/dev/null 2>&1 || true
+claude mcp add -s user herdr -- node "$bin"
+"""

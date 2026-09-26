@@ -1,0 +1,3 @@
+# Hoisted like npm: typecheck and test/e2e.ts import packages the root does not declare.
+[install]
+linker = "hoisted"

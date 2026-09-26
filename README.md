@@ -24,6 +24,8 @@ Claude Code parent, once per user (path is wherever you cloned or pi installed t
 claude mcp add -s user herdr -- node <repo>/packages/claude/bin/herdr-agents-mcp.ts
 ```
 
+From a checkout with [mise](https://mise.jdx.dev), `mise run mcp:install` does the same and replaces any earlier registration. It registers pi's git install by default. Set `HERDR_AGENTS_DIR` to register another checkout, for example `HERDR_AGENTS_DIR=$PWD mise run mcp:install`.
+
 Claude Code children spawned by either parent get the MCP server injected automatically and do not need the registration.
 
 ## Layout
@@ -153,11 +155,14 @@ Child calls `SendMessage({ message, expect_reply: true })`, ends its turn. The t
 
 ## Development
 
+[mise](https://mise.jdx.dev) pins the toolchain (bun as package manager, Node as runtime):
+
 ```
-npm install
-npm test
-npm run typecheck
-npm run lint
+mise install
+bun install
+bun run test
+bun run typecheck
+bun run lint
 ```
 
-The core runs on [Effect](https://effect.website) v4, see [ADR 0001](docs/adr/0001-effect-v4-core.md). `npm run typecheck` first patches the local TypeScript with the Effect language service, so it also reports Effects that are created but never run.
+The core runs on [Effect](https://effect.website) v4, see [ADR 0001](docs/adr/0001-effect-v4-core.md). `bun run typecheck` first patches the local TypeScript with the Effect language service, so it also reports Effects that are created but never run.
