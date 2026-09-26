@@ -6,3 +6,7 @@
 	path = deps/herdr
 	url = https://github.com/herdrdev/herdr.git
 	shallow = true
+[submodule "deps/effect"]
+	path = deps/effect
+	url = https://github.com/Effect-TS/effect.git
+	shallow = true

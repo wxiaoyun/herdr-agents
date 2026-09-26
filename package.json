@@ -14,6 +14,7 @@
     "herdr-agents-mcp": "./packages/claude/bin/herdr-agents-mcp.ts"
   },
   "scripts": {
+    "prepare": "effect-language-service patch",
     "test": "vitest run --dir packages",
     "typecheck": "tsc --noEmit",
     "lint": "biome check packages/"
@@ -22,6 +23,8 @@
     "@biomejs/biome": "^2.4.14",
     "@earendil-works/pi-ai": "0.87.1",
     "@earendil-works/pi-coding-agent": "0.87.1",
+    "@effect/language-service": "0.87.2",
+    "@effect/vitest": "4.0.0-rc.117",
     "@types/node": "^25.5.0",
     "typescript": "^6.0.0",
     "vitest": "^5.0.2"

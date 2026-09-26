@@ -8,7 +8,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true
+    "erasableSyntaxOnly": true,
+    "plugins": [{ "name": "@effect/language-service" }]
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "packages/*/bin/**/*.ts", "test/**/*.ts"]
 }
