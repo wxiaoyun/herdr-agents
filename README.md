@@ -42,13 +42,13 @@ Claude Code children spawned by either parent get the MCP server injected automa
 | `GetAgentResult` | Any agent: status plus recent screen, or its latest report (pi and claude). `wait: true` blocks. The screen of an unfinished agent is marked as a live screen, not a report. |
 | `SendMessage`    | Text to any agent from `ListAgents`, prefixed `[from <sender id>]`. To an idle child this starts a new turn, the report arrives later as a message. A peer's report does not come back. `to` omitted in a child means the parent. `kind`: `message` (prompt, steers if busy), `interrupt` (esc first), `keys` (raw keys like `enter` or `ctrl+c`). `expect_reply: true` marks the sender `blocked` in herdr until someone replies. |
 | `KillAgent`      | Close a child's pane. Never a peer.                                                                                                                                                                                                                                                                                                                              |
-| `ListAgents`     | Every agent herdr sees, locally and on enabled saved machines: id, relation (`parent`, `child`, `peer`), harness, status, machine, cwd. `relation` and `status` filter the list. A queued child shows its place in the queue. A killed child whose pane is gone is listed only with `status: killed`. |
+| `ListAgents`     | Every agent herdr sees, locally and on enabled saved machines: id, relation (`parent`, `child`, `peer`), harness, status, machine, cwd. `relation` and `status` filter the list. Children and peers share one status vocabulary: `queued`, `starting`, `running`, `blocked`, `idle`, `closed`, `killed`, `unknown`. A queued child shows its place in the queue. A killed child whose pane is gone is listed only with `status: killed`. |
 
 Child ids are `<child harness>-<name>-<n>`, for example `claude-scout-2`, unique among the live agents on the child's machine.
 
 A child that stops on a startup dialog (Claude Code's folder trust prompt, a login) pauses until a person answers it in the pane. The parent never answers it. A foreground spawn keeps waiting, a background spawn returns `blocked` at once. The task prompt goes in once the child is idle and the report follows as usual. A child that exits during startup reports that and stays `idle` for `resume`.
 
-A child's turn ends in status `idle`: its pane stays open and it keeps its context. Continue it with `SendMessage` (background) or `Agent` with `resume` (blocks like a spawn). Only an idle child can be resumed: a busy one is refused, steer it with `SendMessage`, `kind: interrupt` to press esc first. Close it with `KillAgent` or by ending the parent session. Set `close_on_done = true` to close panes at the end of every turn instead.
+A child's turn ends in status `idle`: its pane stays open and it keeps its context. Continue it with `SendMessage` (background) or `Agent` with `resume` (blocks like a spawn). Only an idle child can be resumed: a busy one is refused, steer it with `SendMessage`, `kind: interrupt` to press esc first. Close it with `KillAgent` or by ending the parent session. Set `close_on_done = true` to close panes at the end of every turn instead. Such a child ends in status `closed`, and `resume` relaunches it from its session.
 
 ## Placement
 
@@ -110,7 +110,7 @@ Tool names in user profiles are passed to the child harness as written. Model an
 
 ## Settings
 
-`~/.pi/agent/herdr-agents.toml` then `.pi/herdr-agents.toml` (project wins), read by both parent harnesses. Every key is optional, these are the defaults:
+`~/.pi/agent/herdr-agents.toml` then `.pi/herdr-agents.toml` (project wins), read by both parent harnesses at each use, so an edit applies without a restart. Every key is optional, these are the defaults:
 
 ```toml
 close_on_done = false
@@ -123,12 +123,12 @@ pi_args = []
 claude_args = []
 ```
 
-An unknown key or a value of the wrong type is dropped and logged as `stage=settings_key`.
+An unknown key, a value of the wrong type or a count out of range (for example `max_concurrent = 0`) is dropped and logged as `stage=settings_key`.
 
 - `notify`: `follow_up` injects the background report as a user message and triggers a turn, `passive` appends it for the next turn. pi parent only. While the pi parent runs a turn the report is held until that turn is about to end, and dropped if the parent read it with `GetAgentResult` meanwhile.
-- `max_concurrent`: further spawns queue FIFO. Foreground spawns block, background ones return `queued`. Idle children hold no slot.
-- Timeout returns the partial report with status `timeout` and leaves the child running.
-- Pressing esc during a foreground spawn detaches it: the child keeps running as background.
+- `max_concurrent`: further spawns queue FIFO. Foreground spawns block, background ones return `queued`. Idle children hold no slot. Lowering it lets running children keep their slots.
+- A timeout ends the wait, never the child. A foreground spawn returns a partial report and detaches, a background child delivers a partial report, and the final report arrives as a message when the turn ends. The child holds its slot until then.
+- Pressing esc during a foreground spawn detaches it, in pi and in Claude Code: the child keeps running as background and its report arrives as a message.
 - `pi_args` / `claude_args`: extra CLI args for every child of that harness, for example `["--no-skills"]` or `["--allowedTools", "Bash(git *)"]`.
 
 Children carry `HERDR_AGENTS_PARENT`, `HERDR_AGENTS_DEPTH`, `HERDR_AGENTS_ID`, `HERDR_AGENTS_PROFILE` and `HERDR_AGENTS_HARNESS` in their environment.
@@ -159,3 +159,5 @@ npm test
 npm run typecheck
 npm run lint
 ```
+
+The core runs on [Effect](https://effect.website) v4, see [ADR 0001](docs/adr/0001-effect-v4-core.md). `npm install` patches the local TypeScript with the Effect language service, so `npm run typecheck` also reports Effects that are created but never run.

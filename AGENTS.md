@@ -18,6 +18,10 @@ At the start of any task that touches pi, herdr or Effect behaviour, check for n
 
 To move a pin: `git -C deps/<name> fetch --depth 1 origin <tag or commit> && git -C deps/<name> checkout FETCH_HEAD`, then commit the submodule change.
 
+## Tests
+
+Unit tests run on `@effect/vitest`. Build a Manager or the tools with the helpers in `packages/core/test/helpers.ts`, which stub herdr and the parent harness as layers and set env through a ConfigProvider, never `process.env`. `it.effect` runs on a TestClock: fork anything that sleeps, then `TestClock.adjust`. Wait for a background event (a Delivery, a herdr call) on a Queue or Deferred the stub completes, never with a real sleep.
+
 ## End-to-end check
 
 After changing how agents are spawned, listed, messaged, resumed or killed, run the live check in [docs/e2e.md](docs/e2e.md) (`node test/e2e.ts`) in addition to `npm test`.
