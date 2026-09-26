@@ -43,7 +43,7 @@ const herdr = (...a: string[]) => execFileSync("herdr", a, { encoding: "utf8" })
 let lid: string | undefined;
 let rid: string | undefined;
 try {
-  const local = await A.agent.execute({ prompt: reply("PONG-1"), description: "e2e local pi", harness: "pi", model: piModel, name: "e2e" });
+  const local = await A.agent.execute({ prompt: reply("PONG-1"), description: "e2e local pi", harness: "pi", ...(piModel ? { model: piModel } : {}), name: "e2e" });
   check("A spawns a local pi child", has(local, "PONG-1"), local.text);
   const remote = await A.agent.execute({ prompt: reply("PONG-2"), description: "e2e remote claude", harness: "claude", machine, cwd: "~", model: claudeModel, name: "e2e" });
   check(`A spawns a claude child on ${machine}`, has(remote, "PONG-2"), remote.text);

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Deferred, Effect, Fiber, FiberMap, Layer, Queue } from "effect";
 import { TestClock } from "effect/testing";
+import { Compile } from "typebox/compile";
 import { type AgentInfo, type HerdrClient, HerdrError } from "../src/herdr.ts";
 import { FileLogger, LOG_ENV, log } from "../src/log.ts";
 import { childWorkspaceLabel, ENV_PARENT, type SpawnOpts, sameDir } from "../src/manager.ts";
@@ -798,6 +799,23 @@ describe("listing and busy children", () => {
       expect(starts).toBe(1);
       yield* spawn("d");
       expect(starts).toBe(2);
+    }),
+  );
+});
+
+describe("tool schemas", () => {
+  it.effect("pi's validator accepts each tool's JSON Schema, and a bad call is an error result", () =>
+    Effect.gen(function* () {
+      const t = yield* tools();
+      for (const tool of t.all) expect(Compile(tool.parameters as any).Check({}), tool.name).toBeTypeOf("boolean");
+      const agent = Compile(t.agent.parameters as any);
+      expect(agent.Check({ prompt: "p", description: "d", harness: "claude", timeout_ms: 5 })).toBe(true);
+      expect(agent.Check({ prompt: "p", description: "d", harness: "codex" })).toBe(false);
+      expect(agent.Check({ description: "d" })).toBe(false);
+      const bad = yield* t.agent.run({ description: "d" });
+      expect(bad.isError).toBe(true);
+      expect(bad.text).toContain("Agent: invalid arguments");
+      expect(bad.text).toContain("prompt");
     }),
   );
 });

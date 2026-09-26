@@ -5,8 +5,7 @@
 
 import { homedir } from "node:os";
 import { relative } from "node:path";
-import { Config, Context, Effect, Layer, ManagedRuntime, type Scope } from "effect";
-import { type Static, type TSchema, Type } from "typebox";
+import { Config, Context, Effect, Layer, ManagedRuntime, Schema, type Scope } from "effect";
 import { Herdr } from "./herdr.ts";
 import { FileLogger, log } from "./log.ts";
 import { ENV_DEPTH, ENV_ID, ENV_PARENT, ENV_PROFILE, Manager } from "./manager.ts";
@@ -21,12 +20,16 @@ export interface ToolResult {
   details?: Record<string, unknown>;
 }
 
-/** A tool as the core runs it. `abort` completing means the caller stopped waiting. */
-export interface Tool<S extends TSchema = TSchema> {
+/**
+ * A tool as the core runs it. `parameters` is the JSON Schema of its
+ * arguments. `run` decodes them first. `abort` completing means the caller
+ * stopped waiting.
+ */
+export interface Tool {
   name: string;
   description: string;
-  parameters: S;
-  run(params: Static<S>, abort?: Effect.Effect<void>): Effect.Effect<ToolResult>;
+  parameters: Record<string, unknown>;
+  run(params: unknown, abort?: Effect.Effect<void>): Effect.Effect<ToolResult>;
 }
 
 /**
@@ -46,110 +49,117 @@ const ok = (text: string, details?: Record<string, unknown>): ToolResult => ({
 });
 const err = (text: string): ToolResult => ({ text, isError: true });
 
-const AgentParams = Type.Object({
-  prompt: Type.String({
-    description:
-      "Task for the child. Self-contained, the child has no conversation context.",
-  }),
-  description: Type.String({ description: "3-5 word summary shown in listings." }),
-  subagent_type: Type.Optional(
-    Type.String({ description: "Profile name. Default general-purpose." }),
+const d = (description: string) => ({ description });
+
+const AgentParams = Schema.Struct({
+  prompt: Schema.String.annotate(d("Task for the child. Self-contained, the child has no conversation context.")),
+  description: Schema.String.annotate(d("3-5 word summary shown in listings.")),
+  subagent_type: Schema.optionalKey(Schema.String.annotate(d("Profile name. Default general-purpose."))),
+  harness: Schema.optionalKey(
+    Schema.Literals(["pi", "claude"]).annotate(
+      d("Child harness: pi or claude. Default: profile, then the parent's harness."),
+    ),
   ),
-  harness: Type.Optional(
-    Type.Union([Type.Literal("pi"), Type.Literal("claude")], {
-      description:
-        "Child harness: pi or claude. Default: profile, then the parent's harness.",
-    }),
-  ),
-  model: Type.Optional(
-    Type.String({
-      description:
+  model: Schema.optionalKey(
+    Schema.String.annotate(
+      d(
         "Model id in the child harness's own format. Default inherits the parent model when the harness matches, else the child harness default.",
-    }),
+      ),
+    ),
   ),
-  thinking: Type.Optional(
-    Type.String({ description: "off|minimal|low|medium|high|xhigh|max" }),
-  ),
-  cwd: Type.Optional(
-    Type.String({
-      description:
+  thinking: Schema.optionalKey(Schema.String.annotate(d("off|minimal|low|medium|high|xhigh|max"))),
+  cwd: Schema.optionalKey(
+    Schema.String.annotate(
+      d(
         "Working directory. Default: the parent cwd; on a machine, the same path relative to the remote home. Must exist on the machine the child runs on.",
-    }),
+      ),
+    ),
   ),
-  machine: Type.Optional(
-    Type.String({
-      description:
+  machine: Schema.optionalKey(
+    Schema.String.annotate(
+      d(
         "Saved herdr machine (id or label from `herdr machine list`) to run the child on. Default: this machine. A machine child cannot spawn children.",
-    }),
+      ),
+    ),
   ),
-  run_in_background: Type.Optional(
-    Type.Boolean({
-      description:
+  run_in_background: Schema.optionalKey(
+    Schema.Boolean.annotate(
+      d(
         "false (default): block until the child's turn ends and return its report. true: return at once, the report arrives later as a message.",
-    }),
+      ),
+    ),
   ),
-  name: Type.Optional(
-    Type.String({ description: "Short handle used in the agent id." }),
-  ),
-  resume: Type.Optional(
-    Type.String({
-      description:
+  name: Schema.optionalKey(Schema.String.annotate(d("Short handle used in the agent id."))),
+  resume: Schema.optionalKey(
+    Schema.String.annotate(
+      d(
         "Existing agent id to continue with this prompt: a child, or an idle pi or claude peer from ListAgents. Its report comes back here like a spawn's.",
-    }),
+      ),
+    ),
   ),
-  timeout_ms: Type.Optional(
-    Type.Number({
-      description:
-        "0 = no timeout. On timeout returns partial output, child keeps running.",
-    }),
+  timeout_ms: Schema.optionalKey(
+    Schema.Int.annotate(d("0 = no timeout. On timeout returns partial output, child keeps running.")),
   ),
 });
 
-const ResultParams = Type.Object({
-  agent_id: Type.String(),
-  wait: Type.Optional(Type.Boolean()),
-  timeout_ms: Type.Optional(Type.Number()),
+const ResultParams = Schema.Struct({
+  agent_id: Schema.String,
+  wait: Schema.optionalKey(Schema.Boolean),
+  timeout_ms: Schema.optionalKey(Schema.Int),
 });
 
-const SendParams = Type.Object({
-  to: Type.Optional(
-    Type.String({ description: "Agent id from ListAgents, or a pane id. Default: parent." }),
-  ),
-  message: Type.String(),
-  kind: Type.Optional(
-    Type.Union([
-      Type.Literal("message"),
-      Type.Literal("interrupt"),
-      Type.Literal("keys"),
-    ]),
-  ),
-  expect_reply: Type.Optional(
-    Type.Boolean({ description: "Mark this agent as waiting for the recipient's reply." }),
+const SendParams = Schema.Struct({
+  to: Schema.optionalKey(Schema.String.annotate(d("Agent id from ListAgents, or a pane id. Default: parent."))),
+  message: Schema.String,
+  kind: Schema.optionalKey(Schema.Literals(["message", "interrupt", "keys"])),
+  expect_reply: Schema.optionalKey(
+    Schema.Boolean.annotate(d("Mark this agent as waiting for the recipient's reply.")),
   ),
 });
 
-const KillParams = Type.Object({ agent_id: Type.String() });
+const KillParams = Schema.Struct({ agent_id: Schema.String });
 
-const ListParams = Type.Object({
-  relation: Type.Optional(
-    Type.Union([Type.Literal("parent"), Type.Literal("child"), Type.Literal("peer")], {
-      description: "Only agents with this relation to this session.",
-    }),
+const ListParams = Schema.Struct({
+  relation: Schema.optionalKey(
+    Schema.Literals(["parent", "child", "peer"]).annotate(d("Only agents with this relation to this session.")),
   ),
-  status: Type.Optional(
-    Type.String({
-      description:
+  status: Schema.optionalKey(
+    Schema.String.annotate(
+      d(
         "Only agents with this status, e.g. running, queued, idle, blocked, killed. Killed children whose pane is gone are listed only when asked for with status=killed.",
-    }),
+      ),
+    ),
   ),
+});
+
+/**
+ * A tool from its params schema: the JSON Schema the harness shows the model
+ * comes from the same schema that decodes the call.
+ */
+const tool = <S extends Schema.Decoder<any>>(def: {
+  name: string;
+  description: string;
+  params: S;
+  run: (params: S["Type"], abort: Effect.Effect<void>) => Effect.Effect<ToolResult>;
+}): Tool => ({
+  name: def.name,
+  description: def.description,
+  parameters: Schema.toJsonSchemaDocument(def.params).schema as Record<string, unknown>,
+  run: (params, abort = Effect.never) =>
+    Schema.decodeUnknownEffect(def.params)(params).pipe(
+      Effect.matchEffect({
+        onFailure: (e) => Effect.succeed(err(`${def.name}: invalid arguments: ${e.message}`)),
+        onSuccess: (p) => def.run(p, abort),
+      }),
+    ),
 });
 
 export interface ToolSet {
-  agent: Tool<typeof AgentParams>;
-  result: Tool<typeof ResultParams>;
-  send: Tool<typeof SendParams>;
-  kill: Tool<typeof KillParams>;
-  list: Tool<typeof ListParams>;
+  agent: Tool;
+  result: Tool;
+  send: Tool;
+  kill: Tool;
+  list: Tool;
   all: Tool[];
   manager: Manager;
 }
@@ -178,10 +188,10 @@ export const makeTools: Effect.Effect<
   const machines = (yield* (yield* Herdr).machineList().pipe(Effect.orElseSucceed(() => []))).map((m) => m.label);
   const manager = yield* Manager.make;
 
-  const agent: Tool<typeof AgentParams> = {
+  const agent = tool({
     name: "Agent",
     description: `Spawn a child coding agent (pi or Claude Code) in its own herdr tab, on this machine or on a saved herdr machine. By default blocks until the child's turn ends and returns its report; run_in_background returns at once and the report arrives later as a message. The child stays alive and idle afterwards: continue it with SendMessage (background) or \`resume\` (same wait semantics as a spawn), close it with KillAgent.${machines.length ? ` Saved machines: ${machines.join(", ")}.` : ""}`,
-    parameters: AgentParams,
+    params: AgentParams,
     run: (p, abort) =>
       Effect.gen(function* () {
         const cwd = pHarness.cwd();
@@ -221,26 +231,26 @@ export const makeTools: Effect.Effect<
         );
         return ok(r.text, { id: r.id, status: r.status });
       }).pipe(Effect.catch((e) => Effect.succeed(err(`Agent failed: ${e.message}`)))),
-  };
+  });
 
-  const result: Tool<typeof ResultParams> = {
+  const result = tool({
     name: "GetAgentResult",
     description:
       "Status and output of any agent from ListAgents: the report of its latest turn when idle (pi and claude), else its recent screen. With wait=true blocks until it finishes or blocks on a question.",
-    parameters: ResultParams,
+    params: ResultParams,
     run: (p, abort) =>
       settings.get.pipe(
         Effect.flatMap((s) => manager.result(p.agent_id, p.wait ?? false, p.timeout_ms ?? s.defaultTimeoutMs, abort)),
         Effect.map((text) => ok(text)),
         Effect.catch((e) => Effect.succeed(err(e.message))),
       ),
-  };
+  });
 
-  const send: Tool<typeof SendParams> = {
+  const send = tool({
     name: "SendMessage",
     description:
       "Send text to any agent from ListAgents, child or peer. The recipient sees `[from <your id>]` and replies with its own SendMessage. To an idle child this starts a new turn and its report arrives later as a message; a peer's report does not come back (use Agent resume for that). Omit `to` to reach the parent (child agents only). kind=message queues a prompt (steers if the target is busy), kind=interrupt presses esc first, kind=keys sends raw keys like `enter` or `ctrl+c`. Set expect_reply=true when you need an answer before continuing: end your turn after calling it, the reply arrives as your next message.",
-    parameters: SendParams,
+    params: SendParams,
     run: (p) =>
       Effect.gen(function* () {
         const to = p.to ?? parentPane;
@@ -260,24 +270,24 @@ export const makeTools: Effect.Effect<
         }
         return ok(`Sent to ${to}.`);
       }),
-  };
+  });
 
-  const kill: Tool<typeof KillParams> = {
+  const kill = tool({
     name: "KillAgent",
     description: "Close a child agent's pane. Irreversible. Only this session's children, never a peer.",
-    parameters: KillParams,
+    params: KillParams,
     run: (p) =>
       manager.kill(p.agent_id).pipe(
         Effect.as(ok(`${p.agent_id} killed`)),
         Effect.catch((e) => Effect.succeed(err(e.message))),
       ),
-  };
+  });
 
-  const list: Tool<typeof ListParams> = {
+  const list = tool({
     name: "ListAgents",
     description:
       "Every agent herdr sees, on this machine and on enabled saved machines, one per line: id, relation to this session (parent, child, peer), harness, status, machine, cwd. Children add profile, model and description. A child's model is the resolved one once it has answered. A queued child shows its place in the queue. Killed children whose pane is gone are hidden unless status=killed. Ids off this machine are `<machine>/<id>`. Use the ids as SendMessage `to`, Agent `resume` and GetAgentResult `agent_id`.",
-    parameters: ListParams,
+    params: ListParams,
     run: (p) =>
       Effect.gen(function* () {
         const every = yield* manager.agents();
@@ -305,7 +315,7 @@ export const makeTools: Effect.Effect<
             .join("\n"),
         );
       }),
-  };
+  });
 
   yield* log("tools_created", { harness: pHarness.harness, depth, profile: myProfile || undefined });
   return {
@@ -314,25 +324,25 @@ export const makeTools: Effect.Effect<
     send,
     kill,
     list,
-    all: [agent, result, send, kill, list] as Tool[],
+    all: [agent, result, send, kill, list],
     manager,
   };
 });
 
 /** A tool as a parent harness calls it: aborting the signal detaches, it never rejects. */
-export interface ToolDef<S extends TSchema = TSchema> {
+export interface ToolDef {
   name: string;
   description: string;
-  parameters: S;
-  execute(params: Static<S>, signal?: AbortSignal): Promise<ToolResult>;
+  parameters: Record<string, unknown>;
+  execute(params: unknown, signal?: AbortSignal): Promise<ToolResult>;
 }
 
 export interface Tools {
-  agent: ToolDef<typeof AgentParams>;
-  result: ToolDef<typeof ResultParams>;
-  send: ToolDef<typeof SendParams>;
-  kill: ToolDef<typeof KillParams>;
-  list: ToolDef<typeof ListParams>;
+  agent: ToolDef;
+  result: ToolDef;
+  send: ToolDef;
+  kill: ToolDef;
+  list: ToolDef;
   all: ToolDef[];
   manager: Manager;
   /** Run a Manager effect on this runtime. */
@@ -375,7 +385,7 @@ export async function createTools(
     ),
   );
   const set = await runtime.runPromise(ToolsService.use(Effect.succeed));
-  const bridge = <S extends TSchema>(t: Tool<S>): ToolDef<S> => ({
+  const bridge = (t: Tool): ToolDef => ({
     name: t.name,
     description: t.description,
     parameters: t.parameters,
@@ -392,7 +402,7 @@ export async function createTools(
     send,
     kill,
     list,
-    all: [agent, result, send, kill, list] as ToolDef[],
+    all: [agent, result, send, kill, list],
     manager: set.manager,
     run: (effect) => runtime.runPromise(effect),
     flush: () => runtime.runSync(set.manager.flush()),

@@ -32,7 +32,7 @@ export function handler(tools: Pick<Tools, "all">) {
           tools: tools.all.map((t) => ({
             name: t.name,
             description: t.description,
-            inputSchema: JSON.parse(JSON.stringify(t.parameters)),
+            inputSchema: t.parameters,
           })),
         };
       case "tools/call": {
