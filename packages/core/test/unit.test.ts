@@ -782,6 +782,26 @@ describe("machines and idle children", () => {
   );
 });
 
+describe("interrupt", () => {
+  it.effect("presses esc, waits for the turn to stop, then sends the message", () =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const note = (s: string) => Effect.sync(() => seen.push(s));
+      const m = yield* manager({
+        herdr: {
+          ...emptyHerdr(),
+          sendKeys: (_id, keys) => note(`keys ${keys.join(" ")}`),
+          agentWaitUntil: (_id, states) =>
+            note(`wait ${states.join(",")}`).pipe(Effect.as({ status: "idle", pane: "w1:p5" } as AgentInfo)),
+          agentPrompt: (_id, text) => note(`prompt ${text}`),
+        },
+      });
+      yield* m.send("w1:p5", "stop and do this", "interrupt");
+      expect(seen).toEqual(["keys esc", "wait idle,done,blocked", "prompt stop and do this"]);
+    }),
+  );
+});
+
 describe("listing and busy children", () => {
   it.effect("shows the queue place, hides killed children, refuses to resume a busy child", () =>
     Effect.gen(function* () {

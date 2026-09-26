@@ -1119,7 +1119,10 @@ export class Manager {
       if (kind === "keys") return yield* h.sendKeys(ref, message.split(/\s+/).filter(Boolean));
       if (kind === "interrupt") {
         yield* h.sendKeys(ref, ["esc"]);
-        yield* Effect.sleep("300 millis");
+        // The message goes in once esc has stopped the turn, or after 2s if herdr never says so.
+        yield* withTimeout(h.agentWaitUntil(ref, ["idle", "done", "blocked"]), 2000).pipe(
+          Effect.catch((e) => log("interrupt_wait", { to, error: e.message })),
+        );
       }
       // A Message to an Idle Peer is not a Resume: nothing is delivered back.
       if (child?.status === "idle" && !child.peer) {
