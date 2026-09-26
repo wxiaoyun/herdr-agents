@@ -1,8 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { log } from "./herdr.ts";
+import { Effect } from "effect";
+import { log } from "./log.ts";
 import { HARNESSES, type Harness } from "./parent-harness.ts";
-import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "./paths.ts";
+import { CONFIG_DIR_NAME, parseFrontmatter } from "./paths.ts";
 
 export interface Profile {
   name: string;
@@ -61,45 +62,42 @@ const asList = (v: unknown): string[] | undefined => {
   return undefined;
 };
 
-function loadDir(dir: string, out: Map<string, Profile>): void {
-  if (!existsSync(dir)) return;
-  for (const f of readdirSync(dir)) {
-    if (!f.endsWith(".md")) continue;
-    const path = join(dir, f);
-    try {
-      const { frontmatter: fm, body } = parseFrontmatter<
-        Record<string, unknown>
-      >(readFileSync(path, "utf8"));
-      const name = String(fm.name ?? basename(f, ".md"));
-      const allowed = fm.allowed_subagents;
-      out.set(name, {
-        name,
-        description: String(fm.description ?? ""),
-        harness: HARNESSES.find((h) => h === fm.harness),
-        model: fm.model ? String(fm.model) : undefined,
-        thinking: fm.thinking ? String(fm.thinking) : undefined,
-        tools: asList(fm.tools),
-        promptMode: fm.prompt_mode === "replace" ? "replace" : "append",
-        systemPrompt: body.trim() || undefined,
-        allowedSubagents:
-          allowed === "all" || allowed === undefined
-            ? "all"
-            : (asList(allowed) ?? []),
-      });
-    } catch (e) {
-      log("profile_parse", { path, error: String(e) });
-    }
-  }
+function readProfile(path: string): Profile {
+  const { frontmatter: fm, body } = parseFrontmatter<Record<string, unknown>>(readFileSync(path, "utf8"));
+  const name = String(fm.name ?? basename(path, ".md"));
+  const allowed = fm.allowed_subagents;
+  return {
+    name,
+    description: String(fm.description ?? ""),
+    harness: HARNESSES.find((h) => h === fm.harness),
+    model: fm.model ? String(fm.model) : undefined,
+    thinking: fm.thinking ? String(fm.thinking) : undefined,
+    tools: asList(fm.tools),
+    promptMode: fm.prompt_mode === "replace" ? "replace" : "append",
+    systemPrompt: body.trim() || undefined,
+    allowedSubagents: allowed === "all" || allowed === undefined ? "all" : (asList(allowed) ?? []),
+  };
 }
 
+const loadDir = (dir: string, out: Map<string, Profile>): Effect.Effect<void> =>
+  Effect.forEach(
+    existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")) : [],
+    (f) => {
+      const path = join(dir, f);
+      return Effect.try(() => readProfile(path)).pipe(
+        Effect.tap((p) => Effect.sync(() => out.set(p.name, p))),
+        Effect.catch((e) => log("profile_parse", { path, error: String(e.cause) })),
+      );
+    },
+    { discard: true },
+  );
+
 /** Builtins first, then global, workspace, project dirs. Same name later wins. */
-export function loadProfiles(
-  cwd: string,
-  agentDir = getAgentDir(),
-): Map<string, Profile> {
-  const out = new Map(BUILTIN_PROFILES.map((p) => [p.name, p]));
-  loadDir(join(agentDir, "agents"), out);
-  loadDir(join(cwd, ".agents", "agents"), out);
-  loadDir(join(cwd, CONFIG_DIR_NAME, "agents"), out);
-  return out;
-}
+export const loadProfiles = (cwd: string, agentDir: string): Effect.Effect<Map<string, Profile>> =>
+  Effect.gen(function* () {
+    const out = new Map(BUILTIN_PROFILES.map((p) => [p.name, p]));
+    yield* loadDir(join(agentDir, "agents"), out);
+    yield* loadDir(join(cwd, ".agents", "agents"), out);
+    yield* loadDir(join(cwd, CONFIG_DIR_NAME, "agents"), out);
+    return out;
+  });

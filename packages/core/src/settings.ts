@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Context, Effect, Layer, Schema } from "effect";
 import { parse } from "smol-toml";
-import { log } from "./herdr.ts";
-import { CONFIG_DIR_NAME, getAgentDir } from "./paths.ts";
+import { log } from "./log.ts";
+import { ParentHarness } from "./parent-harness.ts";
+import { agentDir, CONFIG_DIR_NAME } from "./paths.ts";
 
 export interface Settings {
   closeOnDone: boolean;
@@ -30,37 +32,73 @@ export const DEFAULTS: Settings = {
 
 const FILE = "herdr-agents.toml";
 
-const camel = (key: string): string => key.replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
+const Args = Schema.Array(Schema.String);
+const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
-/** Keys are snake_case in the file, e.g. `max_concurrent`. Unknown keys and wrong types are dropped. */
-function readToml(path: string): Partial<Settings> {
-  if (!existsSync(path)) return {};
+/** The file's snake_case keys, each with the setting it fills and the type it must have. */
+const KEYS: Record<string, readonly [keyof Settings, Schema.Decoder<unknown>]> = {
+  close_on_done: ["closeOnDone", Schema.Boolean],
+  max_concurrent: ["maxConcurrent", Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))],
+  default_timeout_ms: ["defaultTimeoutMs", Count],
+  notify: ["notify", Schema.Literals(["follow_up", "passive"])],
+  max_depth: ["maxDepth", Count],
+  // TOML has no null, so an unset default model is simply absent.
+  default_model: ["defaultModel", Schema.String],
+  pi_args: ["piArgs", Args],
+  claude_args: ["claudeArgs", Args],
+};
+
+const parseFile = (path: string): Record<string, unknown> | Error | undefined => {
+  if (!existsSync(path)) return undefined;
   try {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(parse(readFileSync(path, "utf8")))) {
-      const key = camel(k) as keyof Settings;
-      const want = DEFAULTS[key];
-      // `default_model` has no default to take a type from: TOML has no null.
-      const okType =
-        key === "defaultModel"
-          ? typeof v === "string"
-          : key in DEFAULTS && typeof v === typeof want && Array.isArray(v) === Array.isArray(want);
-      // `maxDepth` would survive `camel` unchanged: the file format is snake_case only.
-      if (okType && /^[a-z_]+$/.test(k)) out[key] = v;
-      else log("settings_key", { path, key: k, error: "unknown key or wrong type" });
-    }
-    return out;
+    return parse(readFileSync(path, "utf8"));
   } catch (e) {
-    log("settings_parse", { path, error: String(e) });
-    return {};
+    return e instanceof Error ? e : new Error(String(e));
   }
-}
+};
+
+/** Unknown keys and wrong types are dropped one by one, the rest of the file still counts. */
+const readToml = (path: string): Effect.Effect<Partial<Settings>> =>
+  Effect.gen(function* () {
+    const parsed = parseFile(path);
+    if (!parsed) return {};
+    if (parsed instanceof Error) {
+      yield* log("settings_parse", { path, error: parsed.message });
+      return {};
+    }
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const key = Object.hasOwn(KEYS, k) ? KEYS[k] : undefined;
+      if (key && Schema.is(key[1])(v)) out[key[0]] = v;
+      else yield* log("settings_key", { path, key: k, error: "unknown key or wrong type" });
+    }
+    return out as Partial<Settings>;
+  });
 
 /** Global file then project file, later wins. Missing keys fall back to DEFAULTS. */
-export function loadSettings(cwd: string, agentDir = getAgentDir()): Settings {
-  return {
-    ...DEFAULTS,
-    ...readToml(join(agentDir, FILE)),
-    ...readToml(join(cwd, CONFIG_DIR_NAME, FILE)),
-  };
+export const readSettings = (cwd: string, dir: string): Effect.Effect<Settings> =>
+  Effect.gen(function* () {
+    return {
+      ...DEFAULTS,
+      ...(yield* readToml(join(dir, FILE))),
+      ...(yield* readToml(join(cwd, CONFIG_DIR_NAME, FILE))),
+    };
+  });
+
+/** Settings as the files say now, for the parent's current cwd. */
+export class CurrentSettings extends Context.Service<CurrentSettings, { readonly get: Effect.Effect<Settings> }>()(
+  "herdr-agents/CurrentSettings",
+) {
+  static readonly layer = Layer.effect(
+    CurrentSettings,
+    Effect.gen(function* () {
+      const parent = yield* ParentHarness;
+      const dir = yield* agentDir;
+      return { get: Effect.suspend(() => readSettings(parent.cwd(), dir)) };
+    }).pipe(Effect.orDie),
+  );
+
+  /** Fixed settings, for tests. */
+  static readonly fixed = (s: Partial<Settings> = {}) =>
+    Layer.succeed(CurrentSettings, { get: Effect.succeed({ ...DEFAULTS, ...s }) });
 }

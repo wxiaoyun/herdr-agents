@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "description": "pi extension, the pi parent harness",
-  "dependencies": { "@herdr-agents/core": "*" },
+  "dependencies": { "@herdr-agents/core": "*", "effect": "4.0.0-rc.117" },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*"

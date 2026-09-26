@@ -4,12 +4,16 @@
  * children, B sees them only as peers. Exits non-zero when a check fails.
  */
 import { execFileSync } from "node:child_process";
-import { h } from "../packages/core/src/herdr.ts";
-import type { ParentHarness } from "../packages/core/src/parent-harness.ts";
+import { Effect, Layer } from "effect";
+import { Herdr } from "../packages/core/src/herdr.ts";
+import { FileLogger } from "../packages/core/src/log.ts";
+import { ParentHarness } from "../packages/core/src/parent-harness.ts";
 import { createTools, type ToolResult } from "../packages/core/src/tools.ts";
 
-const machine =
-  process.env.E2E_MACHINE ?? (await h.machineList()).find((m) => m.enabled !== false)?.label;
+const saved = await Effect.runPromise(
+  Herdr.use((h) => h.machineList()).pipe(Effect.provide(Layer.merge(Herdr.layer, FileLogger))),
+);
+const machine = process.env.E2E_MACHINE ?? saved.find((m) => m.enabled !== false)?.label;
 if (!machine) {
   console.error("no saved herdr machine: set E2E_MACHINE or run `herdr machine add`");
   process.exit(2);
@@ -17,9 +21,14 @@ if (!machine) {
 const claudeModel = process.env.E2E_CLAUDE_MODEL ?? "claude-haiku-4-5";
 const piModel = process.env.E2E_PI_MODEL;
 
-const stub = (): ParentHarness => ({ harness: "claude", deliver: () => {}, setBlocked: () => {} });
-const A = createTools(stub(), () => process.cwd());
-const B = createTools(stub(), () => process.cwd());
+const stub = Layer.succeed(ParentHarness, {
+  harness: "claude",
+  cwd: () => process.cwd(),
+  deliver: () => Effect.void,
+  setBlocked: () => Effect.void,
+});
+const A = await createTools(stub);
+const B = await createTools(stub);
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {

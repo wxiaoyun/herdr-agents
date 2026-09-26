@@ -1,5 +1,6 @@
 export * from "./args.ts";
 export * from "./herdr.ts";
+export * from "./log.ts";
 export * from "./manager.ts";
 export * from "./parent-harness.ts";
 export * from "./paths.ts";

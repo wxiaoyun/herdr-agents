@@ -1,62 +1,63 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { type Herdr, HerdrError, type ToolSet } from "@herdr-agents/core";
-import { describe, expect, it } from "vitest";
-import { createClaudeParent } from "../src/parent-harness.ts";
+import { describe, expect, it } from "@effect/vitest";
+import { Herdr, type HerdrClient, HerdrError, type Tools } from "@herdr-agents/core";
+import { Effect } from "effect";
+import { makeClaudeParent } from "../src/parent-harness.ts";
 import { handler } from "../src/server.ts";
 
-const herdr = (over: Partial<Herdr>): Herdr =>
-  ({
-    agentPrompt: async () => {},
-    paneRun: async () => {},
-    paneReportAgent: async () => {},
-    ...over,
-  }) as Herdr;
-
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const parent = (over: Partial<HerdrClient>) =>
+  makeClaudeParent("w1:p1").pipe(
+    Effect.provideService(Herdr, {
+      agentPrompt: () => Effect.void,
+      paneRun: () => Effect.void,
+      paneReportAgent: () => Effect.void,
+      ...over,
+    } as HerdrClient),
+  );
 
 describe("claude parent harness", () => {
-  it("types a report into its own pane", async () => {
-    const prompts: string[] = [];
-    const pHarness = createClaudeParent("w1:p1", herdr({ agentPrompt: async (id, t) => { prompts.push(`${id}:${t}`); } }));
-    pHarness.deliver("report text", "passive");
-    await tick();
-    expect(prompts).toEqual(["w1:p1:[herdr-agents delivery: agent output, not typed by the user]\nreport text"]);
-  });
+  it.effect("types a report into its own pane", () =>
+    Effect.gen(function* () {
+      const prompts: string[] = [];
+      const p = yield* parent({ agentPrompt: (id, t) => Effect.sync(() => prompts.push(`${id}:${t}`)) });
+      yield* p.deliver("report text", "passive");
+      expect(prompts).toEqual(["w1:p1:[herdr-agents delivery: agent output, not typed by the user]\nreport text"]);
+    }),
+  );
 
-  it("falls back to pane run when the pane is blocked", async () => {
-    const runs: string[] = [];
-    const pHarness = createClaudeParent(
-      "w1:p1",
-      herdr({
-        agentPrompt: async () => { throw new HerdrError("blocked", "agent_blocked"); },
-        paneRun: async (_p, t) => { runs.push(t); },
-      }),
-    );
-    pHarness.deliver("hi", "follow_up");
-    await tick();
-    expect(runs).toEqual(["[herdr-agents delivery: agent output, not typed by the user]\nhi"]);
-  });
+  it.effect("falls back to pane run when the pane is blocked", () =>
+    Effect.gen(function* () {
+      const runs: string[] = [];
+      const p = yield* parent({
+        agentPrompt: () => Effect.fail(new HerdrError({ message: "blocked", code: "agent_blocked" })),
+        paneRun: (_p, t) => Effect.sync(() => runs.push(t)),
+      });
+      yield* p.deliver("hi", "follow_up");
+      expect(runs).toEqual(["[herdr-agents delivery: agent output, not typed by the user]\nhi"]);
+    }),
+  );
 
-  it("reports blocked and working to herdr", async () => {
-    const states: string[] = [];
-    const pHarness = createClaudeParent("w1:p1", herdr({ paneReportAgent: async (_p, s) => { states.push(s); } }));
-    pHarness.setBlocked(true, "awaiting parent");
-    pHarness.setBlocked(false);
-    await tick();
-    expect(states).toEqual(["blocked", "working"]);
-  });
+  it.effect("reports blocked and working to herdr", () =>
+    Effect.gen(function* () {
+      const states: string[] = [];
+      const p = yield* parent({ paneReportAgent: (_p, s) => Effect.sync(() => states.push(s)) });
+      yield* p.setBlocked(true, "awaiting parent");
+      yield* p.setBlocked(false);
+      expect(states).toEqual(["blocked", "working"]);
+    }),
+  );
 });
 
 describe("mcp server", () => {
-  const fakeTools = (): ToolSet => {
+  const fakeTools = (): Pick<Tools, "all"> => {
     const t: any = {
       name: "Agent",
       description: "d",
       parameters: { type: "object", properties: { prompt: { type: "string" } }, required: ["prompt"] },
       execute: async (p: any) => ({ text: `ran ${p.prompt}` }),
     };
-    return { all: [t] } as any;
+    return { all: [t] };
   };
 
   it("answers initialize, tools/list and tools/call", async () => {

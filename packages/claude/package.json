@@ -5,5 +5,5 @@
   "private": true,
   "description": "Claude Code parent harness: stdio MCP server",
   "bin": { "herdr-agents-mcp": "./bin/herdr-agents-mcp.ts" },
-  "dependencies": { "@herdr-agents/core": "*" }
+  "dependencies": { "@herdr-agents/core": "*", "effect": "4.0.0-rc.117" }
 }

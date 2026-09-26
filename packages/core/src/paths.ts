@@ -1,18 +1,26 @@
 /**
- * paths.ts: pi's config locations, reimplemented so the core never imports
- * pi's runtime (the Claude parent harness runs without it).
+ * paths.ts: pi's and Claude Code's config locations, reimplemented so the
+ * core never imports pi's runtime (the Claude parent harness runs without it).
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Config } from "effect";
 import { parse } from "yaml";
 
 export const CONFIG_DIR_NAME = ".pi";
 
-export function getAgentDir(): string {
-  const env = process.env.PI_CODING_AGENT_DIR;
-  if (env) return env.replace(/^~(?=$|\/)/, homedir());
-  return join(homedir(), CONFIG_DIR_NAME, "agent");
-}
+const expandHome = (p: string): string => p.replace(/^~(?=$|\/)/, homedir());
+
+/** pi's agent dir: `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. */
+export const agentDir: Config.Config<string> = Config.String("PI_CODING_AGENT_DIR").pipe(
+  Config.map(expandHome),
+  Config.withDefault(join(homedir(), CONFIG_DIR_NAME, "agent")),
+);
+
+/** Claude Code's config dir: `CLAUDE_CONFIG_DIR`, else `~/.claude`. */
+export const claudeDir: Config.Config<string> = Config.String("CLAUDE_CONFIG_DIR").pipe(
+  Config.withDefault(join(homedir(), ".claude")),
+);
 
 export function parseFrontmatter<T extends Record<string, unknown>>(
   content: string,

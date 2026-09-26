@@ -4,11 +4,12 @@
  * event bus.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type AgentEntry, createTools, log, type ParentHarness } from "@herdr-agents/core";
+import { createTools, logNow, messageOf, ParentHarness } from "@herdr-agents/core";
+import { Effect, Layer } from "effect";
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
   if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) {
-    log("disabled", { reason: "not inside a herdr pane" });
+    logNow("disabled", { reason: "not inside a herdr pane" });
     return;
   }
 
@@ -17,33 +18,39 @@ export default function (pi: ExtensionAPI) {
   let awaitingParent = false;
   let busy = false;
 
-  const pHarness: ParentHarness = {
+  const setBlocked = (active: boolean, label?: string) =>
+    Effect.sync(() => {
+      awaitingParent = active;
+      pi.events.emit("herdr:blocked", { active, label });
+    });
+
+  const parent = Layer.succeed(ParentHarness, {
     harness: "pi",
+    cwd: () => cwd,
     busy: () => busy,
     model: () => model,
     thinking: () => pi.getThinkingLevel(),
-    deliver(text, notify) {
-      if (notify === "follow_up") {
-        pi.sendUserMessage(text, { deliverAs: "followUp" });
-      } else {
-        pi.sendMessage(
-          { customType: "herdr-subagent", content: text, display: true },
-          { deliverAs: "nextTurn" },
-        );
-      }
-    },
-    setBlocked(active, label) {
-      awaitingParent = active;
-      pi.events.emit("herdr:blocked", { active, label });
-    },
-  };
+    // Synchronous, so `flush` can run inside pi's turn-end handler.
+    deliver: (text, notify) =>
+      Effect.sync(() => {
+        if (notify === "follow_up") {
+          pi.sendUserMessage(text, { deliverAs: "followUp" });
+        } else {
+          pi.sendMessage(
+            { customType: "herdr-subagent", content: text, display: true },
+            { deliverAs: "nextTurn" },
+          );
+        }
+      }),
+    setBlocked,
+  });
 
   // child side: clear herdr "blocked" once the parent's reply arrives
   pi.on("input", () => {
-    if (awaitingParent) pHarness.setBlocked(false);
+    if (awaitingParent) Effect.runSync(setBlocked(false));
   });
 
-  const tools = createTools(pHarness, () => cwd);
+  const tools = await createTools(parent);
 
   // pi drains follow-ups inside the same run once the loop would stop. A
   // Report the agent already read with GetAgentResult would come back as a
@@ -52,7 +59,7 @@ export default function (pi: ExtensionAPI) {
   // pi awaits before it polls the follow-up queue.
   const idle = () => {
     busy = false;
-    tools.manager().flush();
+    tools.flush();
   };
   pi.on("agent_start", () => {
     busy = true;
@@ -104,14 +111,10 @@ export default function (pi: ExtensionAPI) {
     });
   }
 
+  const m = tools.manager;
   // ponytail: completions reuse one listing for 5s, since listing runs a
   // herdr call per saved machine; drop the cache if staleness ever bites.
-  let listing: { at: number; agents: Promise<AgentEntry[]> } | undefined;
-  const listCached = () => {
-    if (!listing || Date.now() - listing.at > 5000)
-      listing = { at: Date.now(), agents: tools.manager().agents().catch(() => []) };
-    return listing.agents;
-  };
+  const listCached = await tools.run(Effect.cachedWithTTL(m.agents(), "5 seconds"));
 
   const send = async (to: string, message: string, notify: (t: string, k: "info" | "error") => void) => {
     const r = await tools.send.execute({ to, message });
@@ -126,7 +129,7 @@ export default function (pi: ExtensionAPI) {
         return !prefix.includes(" ") && "send".startsWith(prefix)
           ? [{ value: "send ", label: "send", description: "message an agent" }]
           : null;
-      const items = (await listCached())
+      const items = (await tools.run(listCached))
         .filter((a) => a.id.startsWith(m[1]))
         .map((a) => ({
           value: `send ${a.id} `,
@@ -141,8 +144,7 @@ export default function (pi: ExtensionAPI) {
       const direct = args.trim().match(/^send\s+(\S+)\s+([\s\S]+)$/);
       if (direct) return send(direct[1], direct[2], notify);
       if (args.trim()) return notify("usage: /agents [send <id> <message>]", "error");
-      const m = tools.manager();
-      const all = await m.agents();
+      const all = await tools.run(m.agents());
       if (!all.length) return notify("no other agents", "info");
       const labels = all.map(
         (a) =>
@@ -153,8 +155,8 @@ export default function (pi: ExtensionAPI) {
       const a = all[labels.indexOf(pick)];
       const actions = a.relation === "child" ? ["focus", "send", "kill", "cancel"] : ["focus", "send", "cancel"];
       const action = await ctx.ui.select(a.id, actions);
-      if (action === "focus") await m.focus(a.id).catch((e) => notify(String(e), "error"));
-      if (action === "kill") await m.kill(a.id).catch((e) => notify(String(e), "error"));
+      if (action === "focus") await tools.run(m.focus(a.id)).catch((e) => notify(messageOf(e), "error"));
+      if (action === "kill") await tools.run(m.kill(a.id)).catch((e) => notify(messageOf(e), "error"));
       if (action === "send") {
         const text = await ctx.ui.input(`Message ${a.id}`);
         if (text?.trim()) await send(a.id, text, notify);

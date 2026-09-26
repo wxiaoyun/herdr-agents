@@ -1,7 +1,4 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { log } from "./herdr.ts";
 import type { Harness } from "./parent-harness.ts";
 
 export interface Report {
@@ -25,15 +22,6 @@ const EMPTY = (): Report => ({
   text: "",
   usage: { input: 0, output: 0, cost: 0, turns: 0 },
 });
-
-function readLocal(sessionPath: string): string {
-  try {
-    return readFileSync(sessionPath, "utf8");
-  } catch (e) {
-    log("read_session", { sessionPath, error: String(e) });
-    return "";
-  }
-}
 
 function entries(raw: string): any[] {
   const out: any[] = [];
@@ -117,10 +105,6 @@ export function parseReport(harness: Harness, raw: string): Report {
   return harness === "claude" ? readClaude(raw) : readPi(raw);
 }
 
-/** `parseReport` over a local session file. */
-export const readReport = (harness: Harness, sessionPath: string): Report =>
-  parseReport(harness, readLocal(sessionPath));
-
 /**
  * Role of the last message entry, or undefined when the file has no messages
  * yet (missing file, boot in progress, garbage only). An assistant entry that
@@ -145,28 +129,19 @@ export function parseLastSpeaker(
   return last;
 }
 
-/** `parseLastSpeaker` over a local session file. */
-export const lastSpeaker = (
-  harness: Harness,
-  sessionPath: string,
-): string | undefined => parseLastSpeaker(harness, readLocal(sessionPath));
-
 /**
  * Claude Code keeps sessions at `<config dir>/projects/<encoded cwd>/<id>.jsonl`
  * and herdr only reports the id. pi reports the path itself. On a Machine the
- * config dir is unknown, so the path starts with `~/.claude` for ssh to expand.
+ * config dir is unknown, so the caller passes `~/.claude` for ssh to expand.
  */
 export function sessionPathFor(
   harness: Harness,
   cwd: string,
   sessionId: string | undefined,
-  remote = false,
+  claudeDir: string,
 ): string | undefined {
   if (harness !== "claude" || !sessionId) return undefined;
-  const dir = remote
-    ? "~/.claude"
-    : (process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"));
-  return join(dir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
+  return join(claudeDir, "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${sessionId}.jsonl`);
 }
 
 export const formatUsage = (u: Report["usage"]): string =>
