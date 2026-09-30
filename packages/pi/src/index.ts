@@ -72,8 +72,11 @@ export default async function (pi: ExtensionAPI) {
   });
   pi.on("agent_end", idle);
 
+  // model-only: a codemode script must not block on a child or ask the parent
+  // and carry on before the reply arrives.
   const snippets: Record<string, Partial<Parameters<typeof pi.registerTool>[0]>> = {
     Agent: {
+      exposure: "model-only",
       promptSnippet:
         "Spawn a child pi or Claude Code agent (profiles: general-purpose, Worker, Scout, plus user profiles)",
       promptGuidelines: [
@@ -83,6 +86,7 @@ export default async function (pi: ExtensionAPI) {
       ],
     },
     SendMessage: {
+      exposure: "model-only",
       promptGuidelines: [
         "Use SendMessage without `to` to ask the parent agent a clarifying question, then end the turn and wait for the reply.",
         "Use SendMessage with `to` set to an idle child's id to give it a follow-up task, its report arrives as a later message.",
