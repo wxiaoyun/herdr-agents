@@ -692,11 +692,15 @@ describe("machines and idle children", () => {
         herdr: {
           ...emptyHerdr(),
           agentStart: () => Effect.fail(new HerdrError({ message: "blocked during startup", code: "agent_not_ready" })),
+          // herdr can count blocked -> idle in a background pane as a
+          // completion, so the answered dialog may leave the child `done`.
           agentWaitUntil: (_id, states) =>
-            Effect.sync(() => {
-              seen.push(`wait ${states.join(",")}`);
-              return { status: "idle", pane: "w1:p9" } as AgentInfo;
-            }),
+            states.includes("done")
+              ? Effect.sync(() => {
+                  seen.push(`wait ${states.join(",")}`);
+                  return { status: "done", pane: "w1:p9" } as AgentInfo;
+                })
+              : Effect.fail(new HerdrError({ message: "agent wait timed out", code: "timeout" })),
           agentPromptWait: (_id, text) =>
             Effect.sync(() => {
               seen.push(`prompt ${text}`);
@@ -708,7 +712,7 @@ describe("machines and idle children", () => {
       // foreground: the parent keeps waiting while a person answers
       const r = yield* m.spawn(base);
       expect(r.status).toBe("idle");
-      expect(seen).toEqual(["wait idle", "prompt go"]);
+      expect(seen).toEqual(["wait idle,done", "prompt go"]);
       expect(out.sent).toHaveLength(0);
       // background: blocked comes back at once, the report is delivered later
       seen.length = 0;
@@ -717,7 +721,7 @@ describe("machines and idle children", () => {
       expect(b.text).toContain("startup prompt in pane w1:p9");
       expect(b.text).toContain("A person has to answer it");
       yield* out.next;
-      expect(seen).toEqual(["wait idle", "prompt go"]);
+      expect(seen).toEqual(["wait idle,done", "prompt go"]);
       expect(m.children.get(b.id)?.status).toBe("idle");
       expect(out.sent).toHaveLength(1);
     }),

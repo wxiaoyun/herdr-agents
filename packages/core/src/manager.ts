@@ -554,7 +554,8 @@ export class Manager {
 
   private settle(child: Child, o: SpawnOpts): Effect.Effect<void, AgentError | HerdrError> {
     return Effect.gen({ self: this }, function* () {
-      yield* withTimeout(this.hFor(child).agentWaitUntil(child.id, ["idle"]), o.timeoutMs);
+      // A background pane going blocked -> idle can count as a completion.
+      yield* withTimeout(this.hFor(child).agentWaitUntil(child.id, ["idle", "done"]), o.timeoutMs);
       if (!(yield* this.learnSession(child, o)))
         return yield* new AgentError({
           message: `${child.id} exited during startup (the dialog was probably declined)`,
