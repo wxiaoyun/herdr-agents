@@ -4,7 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Deferred, Effect, Fiber, FiberMap, Layer, Queue } from "effect";
 import { TestClock } from "effect/testing";
 import { Compile } from "typebox/compile";
-import { type AgentInfo, type HerdrClient, HerdrError } from "../src/herdr.ts";
+import { type AgentInfo, client, type HerdrClient, HerdrError } from "../src/herdr.ts";
 import { FileLogger, LOG_ENV, log } from "../src/log.ts";
 import { childWorkspaceLabel, ENV_PARENT, type SpawnOpts, sameDir } from "../src/manager.ts";
 import { BUILTIN_PROFILES, loadProfiles } from "../src/profiles.ts";
@@ -319,13 +319,15 @@ describe("prompt-wait stall recovery", () => {
 
   it.effect("collects the report when the child already finished", () =>
     Effect.gen(function* () {
-      const sessionPath = sessionFile(tmp());
+      const dir = tmp();
+      const sessionPath = join(dir, "s.jsonl");
       const closed: string[] = [];
       const m = yield* manager({
         settings: { closeOnDone: true },
         herdr: {
           ...emptyHerdr(),
-          agentPromptWait: stalled,
+          // The turn ends before herdr sees it working.
+          agentPromptWait: () => Effect.sync(() => sessionFile(dir)).pipe(Effect.andThen(stalled())),
           agentGet: () => Effect.succeed({ status: "done", pane: "w1:p8", sessionPath }),
           paneClose: (p) => Effect.sync(() => closed.push(p)),
         },
@@ -334,6 +336,57 @@ describe("prompt-wait stall recovery", () => {
       expect(r.status).toBe("closed");
       expect(r.text).toContain("final answer");
       expect(closed).toEqual(["w1:p9"]); // no stranded pane
+    }),
+  );
+
+  it.effect("a session file that does not exist yet reads as empty", () =>
+    Effect.gen(function* () {
+      const f = sessionFile(tmp());
+      expect(yield* client().readFile(`${f}.missing`)).toBe("");
+      expect(yield* client().readFile(f)).toContain("final answer");
+    }),
+  );
+
+  it.effect("never passes off the previous turn's reply when the new prompt did not land", () =>
+    Effect.gen(function* () {
+      const f = sessionFile(tmp());
+      let prompts = 0;
+      const m = yield* manager({
+        herdr: {
+          ...emptyHerdr(),
+          agentPromptWait: () =>
+            ++prompts === 1 ? Effect.succeed({ status: "idle", pane: "w1:p8", sessionPath: f } as AgentInfo) : stalled(),
+          agentGet: () => Effect.succeed({ status: "idle", pane: "w1:p8", sessionPath: f }),
+        },
+      });
+      const a = yield* m.spawn(base);
+      expect(a.text).toContain("final answer");
+      const again = yield* Effect.forkChild(Effect.flip(m.spawn({ ...base, prompt: "again", resume: a.id })));
+      yield* TestClock.adjust("31 seconds");
+      const e = yield* Fiber.join(again);
+      expect(e.message).toMatch(/no observed working/);
+      expect(e.message).not.toContain("final answer");
+    }),
+  );
+
+  it.effect("does not finish from the session when it could not be read before the prompt", () =>
+    Effect.gen(function* () {
+      const f = sessionFile(tmp());
+      let reads = 0;
+      const m = yield* manager({
+        herdr: {
+          ...emptyHerdr(),
+          readFile: (p) =>
+            ++reads === 1
+              ? Effect.fail(new HerdrError({ message: "ssh cat failed: connection refused" }))
+              : emptyHerdr().readFile(p),
+          agentPromptWait: stalled,
+          agentGet: () => Effect.succeed({ status: "done", pane: "w1:p8", sessionPath: f }),
+        },
+      });
+      const e = yield* Effect.flip(m.spawn(base));
+      expect(e.message).toMatch(/no observed working/);
+      expect(e.message).not.toContain("final answer");
     }),
   );
 

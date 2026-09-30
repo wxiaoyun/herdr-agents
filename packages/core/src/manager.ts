@@ -83,6 +83,11 @@ export interface Child {
   peer?: boolean;
   /** Set while `report` is a partial one taken when a wait of this many ms ran out. */
   timedOut?: number;
+  /**
+   * Assistant turns in the session just before the last prompt this session
+   * sent, `unknown` when that read failed. Absent: no prompt sent yet.
+   */
+  promptTurns?: number | "unknown";
 }
 
 export interface AgentEntry {
@@ -547,7 +552,7 @@ export class Manager {
   private startupWatch(child: Child, o: SpawnOpts): Effect.Effect<void> {
     return this.watcher(
       child,
-      this.settle(child, o).pipe(Effect.andThen(this.hFor(child).agentPromptWait(child.id, o.prompt))),
+      this.settle(child, o).pipe(Effect.andThen(this.promptWait(child, o.prompt))),
       o.timeoutMs,
     );
   }
@@ -801,7 +806,7 @@ export class Manager {
   ): Effect.Effect<SpawnResult, AgentError> {
     return Effect.gen({ self: this }, function* () {
       const h = this.hFor(child);
-      const wait = prompt ? h.agentPromptWait(this.ref(child), prompt) : h.agentWait(this.ref(child));
+      const wait = prompt ? this.promptWait(child, prompt) : h.agentWait(this.ref(child));
       const waited = yield* unlessAborted(
         withTimeout(wait, timeoutMs).pipe(Effect.flatMap((info) => this.settled(child, info, timeoutMs))),
         abort,
@@ -834,7 +839,8 @@ export class Manager {
 
   /**
    * `idle` alone is ambiguous (booting vs finished), so poll the session file:
-   * a turn is done only once an assistant message follows the last user message.
+   * a turn is done only once an assistant message follows the last user message
+   * and the session holds more assistant turns than before the prompt was sent.
    * For a Machine child any herdr error may be a dropped SSH bridge, which gets
    * the same treatment: the child may well have finished meanwhile.
    */
@@ -842,13 +848,20 @@ export class Manager {
     return Effect.gen({ self: this }, function* () {
       if (e._tag !== "HerdrError") return false;
       if (e.code !== "agent_prompt_stalled" && !child.machine) return false;
+      // Without a count from before the prompt, the session cannot tell this turn's reply from an earlier one.
+      const since = child.promptTurns;
+      if (since === "unknown") return false;
       const h = this.hFor(child);
       const deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
       while ((yield* Clock.currentTimeMillis) < deadline) {
         const info = yield* orUndefined(h.agentGet(this.ref(child)));
         if (!info) return false;
         const path = info.sessionPath ?? child.sessionPath;
-        if (path && (yield* this.speaker(child, path)) === "assistant") {
+        const raw = path ? yield* this.readSession(child, path) : "";
+        if (
+          parseLastSpeaker(child.harness, raw) === "assistant" &&
+          (since === undefined || parseReport(child.harness, raw).usage.turns > since)
+        ) {
           yield* log("prompt_wait_stalled", { id: child.id, status: info.status });
           yield* this.finish(child, info);
           return true;
@@ -887,16 +900,40 @@ export class Manager {
   }
 
   private speaker(child: Child, path: string): Effect.Effect<string | undefined> {
+    return this.readSession(child, path).pipe(Effect.map((raw) => parseLastSpeaker(child.harness, raw)));
+  }
+
+  /** Session file contents, empty when unreadable. */
+  private readSession(child: Child, path: string): Effect.Effect<string> {
     return this.hFor(child)
       .readFile(path)
-      .pipe(
-        Effect.catch((e) => log("read_session", { id: child.id, path, error: e.message }).pipe(Effect.as(""))),
-        Effect.map((raw) => parseLastSpeaker(child.harness, raw)),
-      );
+      .pipe(Effect.catch((e) => log("read_session", { id: child.id, path, error: e.message }).pipe(Effect.as(""))));
   }
 
   private promptWatch(child: Child, prompt: string, timeoutMs: number): Effect.Effect<void> {
-    return this.watcher(child, this.hFor(child).agentPromptWait(this.ref(child), prompt), timeoutMs);
+    return this.watcher(child, this.promptWait(child, prompt), timeoutMs);
+  }
+
+  /**
+   * Send a prompt and wait for its turn. The session's assistant turns are
+   * counted first, so after a stall an earlier turn's reply is never taken for
+   * this one's (the prompt may never have landed).
+   */
+  private promptWait(child: Child, prompt: string): Effect.Effect<AgentInfo, HerdrError> {
+    return Effect.gen({ self: this }, function* () {
+      const path = child.sessionPath;
+      child.promptTurns = path
+        ? yield* this.hFor(child)
+            .readFile(path)
+            .pipe(
+              Effect.map((raw) => parseReport(child.harness, raw).usage.turns),
+              Effect.catch((e) =>
+                log("prompt_baseline", { id: child.id, path, error: e.message }).pipe(Effect.as("unknown" as const)),
+              ),
+            )
+        : 0;
+      return yield* this.hFor(child).agentPromptWait(this.ref(child), prompt);
+    });
   }
 
   private waitWatch(child: Child, timeoutMs: number): Effect.Effect<void> {
@@ -1004,10 +1041,7 @@ export class Manager {
     return Effect.gen({ self: this }, function* () {
       const path = child.sessionPath;
       if (!path) return undefined;
-      const raw = yield* this.hFor(child)
-        .readFile(path)
-        .pipe(Effect.catch((e) => log("read_session", { id: child.id, path, error: e.message }).pipe(Effect.as(""))));
-      const r = parseReport(child.harness, raw);
+      const r = parseReport(child.harness, yield* this.readSession(child, path));
       if (r.model && !child.peer) child.model = r.model;
       return r;
     });

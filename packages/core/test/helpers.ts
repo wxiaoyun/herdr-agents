@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConfigProvider, Effect, Layer, Queue } from "effect";
@@ -18,7 +18,10 @@ export const emptyHerdr = (): HerdrClient => ({
   },
   machineList: () => Effect.succeed([]),
   readFile: (p) =>
-    Effect.try({ try: () => readFileSync(p, "utf8"), catch: (e) => new HerdrError({ message: String(e) }) }),
+    Effect.try({
+      try: () => (existsSync(p) ? readFileSync(p, "utf8") : ""),
+      catch: (e) => new HerdrError({ message: String(e) }),
+    }),
   stage: () => Effect.void,
   unstage: () => Effect.void,
   tabCreate: (_l, cwd) => Effect.succeed({ pane: "w1:p9", cwd }),

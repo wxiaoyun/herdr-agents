@@ -166,7 +166,7 @@ export interface HerdrClient {
   /** Same helpers against a saved machine. */
   machine(target: Machine): HerdrClient;
   machineList(): Effect.Effect<Machine[], HerdrError>;
-  /** Session file contents, local or over ssh. */
+  /** Session file contents, local or over ssh. A missing file reads as empty. */
   readFile(path: string): Effect.Effect<string, HerdrError>;
   /** Copy a local staging dir to `as` on the machine (`as` must sit in an existing dir). */
   stage(dir: string, as: string): Effect.Effect<void, HerdrError>;
@@ -217,9 +217,9 @@ export function client(machine?: Machine): HerdrClient {
       ),
     readFile: (path) =>
       machine
-        ? run("ssh", [...SSH, machine.target, `cat ${shellQuote(path)}`], "ssh cat", m)
+        ? run("ssh", [...SSH, machine.target, `test ! -e ${shellQuote(path)} || cat ${shellQuote(path)}`], "ssh cat", m)
         : Effect.tryPromise({
-            try: () => readFile(path, "utf8"),
+            try: () => readFile(path, "utf8").catch((e) => (e?.code === "ENOENT" ? "" : Promise.reject(e))),
             catch: (e) => new HerdrError({ message: `read ${path} failed: ${String(e)}` }),
           }),
     stage: (dir, as) =>
