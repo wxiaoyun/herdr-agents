@@ -1,7 +1,9 @@
 /**
- * herdr.ts: the `herdr` CLI as a service. Every command prints JSON on stdout
- * (success) or JSON on stderr (error). Responses are decoded, so a herdr
- * change fails loudly at this boundary instead of as `undefined` further in.
+ * herdr.ts: the `herdr` CLI as a service. Commands print JSON on stdout,
+ * except `agent read` and `pane read`, which print the screen as text. JSON
+ * responses are decoded, so a herdr change fails loudly at this boundary
+ * instead of as `undefined` further in. Errors are a JSON envelope on stderr,
+ * except usage errors, which exit 2 with plain text and are reported as is.
  *
  * A Machine child lives on another herdr server. Every command for it is
  * prefixed with `--machine <id>`, which herdr forwards over its SSH API
@@ -112,7 +114,8 @@ const tryJson = (s: string): any => {
 /** Run a command, fail with the message herdr printed. Interruption kills the process. */
 const run = (bin: string, args: string[], stage: string, machine?: string): Effect.Effect<string, HerdrError> =>
   Effect.callback<string, HerdrError>((resume, signal) => {
-    execFile(bin, args, { maxBuffer: 16 * 1024 * 1024, signal }, (err, stdout, stderr) => {
+    // No output cap: a Machine child's session file comes through here whole, as a local read does.
+    execFile(bin, args, { maxBuffer: Infinity, signal }, (err, stdout, stderr) => {
       if (!err) return resume(Effect.succeed(stdout));
       if (signal.aborted) return;
       const parsed = tryJson(stderr);
