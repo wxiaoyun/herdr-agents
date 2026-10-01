@@ -614,7 +614,8 @@ describe("machines and idle children", () => {
         machineList: () => Effect.succeed([box]),
         tabCreate: (_l, cwd, env) =>
           note(`${tag}:tab parent=${env.HERDR_AGENTS_PARENT}`).pipe(Effect.as({ pane: "w9:p1", cwd })),
-        stage: (dir, as) => note(`${tag}:stage ${as === dir ? "same" : as.replace(/-[^-]+$/, "-X")}`),
+        // A machine child always stages under /tmp, which is also tmpdir() on Linux, so only a local child reads "same".
+        stage: (dir, as) => note(`${tag}:stage ${tag === "local" && as === dir ? "same" : as.replace(/-[^-]+$/, "-X")}`),
         agentStart: (_i, _p, _k, args) => note(`${tag}:start mcp=${args.includes("--mcp-config")}`),
         agentPromptWait: () =>
           note(`${tag}:wait`).pipe(Effect.as({ status: "idle", pane: "w9:p1", sessionPath: "/remote/s.jsonl" } as AgentInfo)),
