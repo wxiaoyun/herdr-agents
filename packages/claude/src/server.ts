@@ -82,7 +82,8 @@ export function serve(tools: Pick<Tools, "all">): void {
       const result = await handle(msg);
       if (msg.id != null && result !== undefined) write({ jsonrpc: "2.0", id: msg.id, result });
     } catch (e: any) {
-      logNow("rpc_error", { method: msg.method, error: String(e) });
+      // An unknown method is a client probe (e.g. server/discover) the client recovers from, not a failure.
+      logNow(e.code === -32601 ? "rpc_unknown_method" : "rpc_error", { id: msg.id, method: msg.method, error: String(e) });
       if (msg.id !== undefined && msg.id !== null)
         write({ jsonrpc: "2.0", id: msg.id, error: { code: e.code ?? -32603, message: String(e.message ?? e) } });
     }
