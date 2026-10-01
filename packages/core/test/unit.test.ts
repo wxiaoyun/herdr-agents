@@ -41,7 +41,7 @@ describe("logging", () => {
       expect(readFileSync(defaultPath, "utf8")).toMatch(line("stage=default "));
       expect(existsSync(`${defaultPath}.1`)).toBe(true);
 
-      yield* logWith({ [LOG_ENV]: path }, "test", { target: "/tmp/example", status: 200, long: "y".repeat(400) });
+      yield* logWith({ [LOG_ENV]: path }, "test", { target: "/tmp/example", status: 200, unset: undefined, long: "y".repeat(400) });
       expect(readFileSync(path, "utf8")).toMatch(
         line(`stage=test target="/tmp/example" status=200 long="y{299}\\.\\.\\.`),
       );

@@ -17,6 +17,7 @@ export const log = (stage: string, fields: Record<string, unknown> = {}): Effect
 
 const format = (fields: Record<string, unknown>): string =>
   Object.entries(fields)
+    .filter(([, v]) => v !== undefined)
     .map(([k, v]) => {
       const j = JSON.stringify(v) ?? "undefined";
       return `${k}=${j.length > 300 ? `${j.slice(0, 300)}...` : j}`;
