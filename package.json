@@ -15,17 +15,17 @@
   },
   "scripts": {
     "test": "vitest run --dir packages",
-    "typecheck": "effect-language-service patch >/dev/null && tsc --noEmit",
+    "typecheck": "effect-tsgo patch >/dev/null && tsc --noEmit",
     "lint": "biome check packages/"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
     "@earendil-works/pi-coding-agent": "1.0.0",
-    "@effect/language-service": "0.87.3",
+    "@effect/tsgo": "0.48.0",
     "@effect/vitest": "4.0.0",
     "@types/node": "^26.6.4",
     "typebox": "^1.3.7",
-    "typescript": "^6.0.0",
+    "typescript": "7.0.2",
     "vitest": "^5.0.3"
   }
 }
