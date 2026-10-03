@@ -17,7 +17,7 @@ export const makeClaudeParent = (pane: string): Effect.Effect<ParentHarnessShape
         // It lands as a user message, so say who really wrote it.
         const text = `[herdr-agents delivery: agent output, not typed by the user]\n${report}`;
         return h.agentPrompt(pane, text).pipe(
-          Effect.catch((e) => (isHerdrCode(e, "agent_blocked") ? h.paneRun(pane, text) : Effect.fail(e))),
+          Effect.catchIf((e) => isHerdrCode(e, "agent_blocked"), () => h.paneRun(pane, text)),
           Effect.catch((e) => log("deliver_failed", { pane, error: e.message })),
         );
       },

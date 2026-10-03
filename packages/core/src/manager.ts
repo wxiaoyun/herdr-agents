@@ -186,7 +186,7 @@ const unlessAborted = <A, E>(
   eff: Effect.Effect<A, E>,
   abort: Effect.Effect<void>,
 ): Effect.Effect<Option.Option<Result.Result<A, E>>> =>
-  Effect.raceFirst(Effect.result(eff).pipe(Effect.map(Option.some)), abort.pipe(Effect.as(Option.none())));
+  Effect.raceFirst(Effect.result(eff).pipe(Effect.asSome), abort.pipe(Effect.as(Option.none())));
 
 /** A wait bounded by `ms`, 0 meaning none. Runs out as a HerdrError with code `timeout`. */
 const withTimeout = <A, E>(eff: Effect.Effect<A, E>, ms: number): Effect.Effect<A, E | HerdrError> =>

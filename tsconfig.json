@@ -9,7 +9,7 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
-    "plugins": [{ "name": "@effect/language-service" }]
+    "plugins": [{ "name": "@effect/language-service", "diagnosticSeverity": { "lazyEffect": "off" } }]
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "packages/*/bin/**/*.ts", "test/**/*.ts"]
 }
