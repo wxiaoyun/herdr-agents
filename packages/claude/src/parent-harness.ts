@@ -6,6 +6,8 @@
 import { Herdr, isHerdrCode, log, ParentHarness, type ParentHarnessShape } from "@herdr-agents/core";
 import { Effect, Layer } from "effect";
 
+const blocked = (e: unknown) => isHerdrCode(e, "agent_blocked");
+
 export const makeClaudeParent = (pane: string): Effect.Effect<ParentHarnessShape, never, Herdr> =>
   Effect.gen(function* () {
     const h = yield* Herdr;
@@ -16,17 +18,29 @@ export const makeClaudeParent = (pane: string): Effect.Effect<ParentHarnessShape
       deliver: (report) => {
         // It lands as a user message, so say who really wrote it.
         const text = `[herdr-agents delivery: agent output, not typed by the user]\n${report}`;
-        return h.agentPrompt(pane, text).pipe(
-          Effect.catchIf((e) => isHerdrCode(e, "agent_blocked"), () => h.paneRun(pane, text)),
+        const prompt = h.agentPrompt(pane, text);
+        return prompt.pipe(
+          // This session's own expect_reply report: the Delivery starts a turn anyway.
+          Effect.catchIf(blocked, () => h.paneReleaseAgent(pane).pipe(Effect.andThen(prompt))),
+          // A dialog is on screen and typing would answer it: wait until someone has.
+          Effect.catchIf(blocked, () =>
+            log("deliver_wait", { pane }).pipe(
+              Effect.andThen(h.agentWaitUntil(pane, ["idle", "done", "working"])),
+              Effect.andThen(prompt),
+            ),
+          ),
           Effect.catch((e) => log("deliver_failed", { pane, error: e.message })),
         );
       },
-      // ponytail: herdr's screen manifest is the state authority for claude;
-      // this report is best effort and may be overridden on the next redraw.
+      // herdr never clears a reported blocked state on its own: a self-report
+      // beats screen detection. The reply's SendMessage releases it
+      // (Manager.send), and so does a Delivery into this pane.
+      // ponytail: a reply a person types into the pane leaves it blocked until
+      // the next SendMessage or Delivery; watch the session file if that bites.
       setBlocked: (active, label) =>
-        h
-          .paneReportAgent(pane, active ? "blocked" : "working", label)
-          .pipe(Effect.catch((e) => log("report_blocked", { pane, error: e.message }))),
+        (active ? h.paneReportAgent(pane, "blocked", label) : h.paneReleaseAgent(pane)).pipe(
+          Effect.catch((e) => log("report_blocked", { pane, error: e.message })),
+        ),
     };
   });
 

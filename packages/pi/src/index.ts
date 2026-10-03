@@ -18,8 +18,11 @@ export default async function (pi: ExtensionAPI) {
   let awaitingParent = false;
   let busy = false;
 
+  // herdr's pi integration counts blocked reports, so every true is paired
+  // with exactly one false: a second expect_reply before the reply sends none.
   const setBlocked = (active: boolean, label?: string) =>
     Effect.sync(() => {
+      if (awaitingParent === active) return;
       awaitingParent = active;
       pi.events.emit("herdr:blocked", { active, label });
     });
@@ -46,9 +49,7 @@ export default async function (pi: ExtensionAPI) {
   });
 
   // child side: clear herdr "blocked" once the parent's reply arrives
-  pi.on("input", () => {
-    if (awaitingParent) Effect.runSync(setBlocked(false));
-  });
+  pi.on("input", () => Effect.runSync(setBlocked(false)));
 
   const tools = await createTools(parent);
 

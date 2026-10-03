@@ -88,6 +88,8 @@ export interface Child {
    * sent, `unknown` when that read failed. Absent: no prompt sent yet.
    */
   promptTurns?: number | "unknown";
+  /** How it was first spawned. A relaunch reuses it, absent for a Peer. */
+  opts?: SpawnOpts;
 }
 
 export interface AgentEntry {
@@ -433,14 +435,17 @@ export class Manager {
     });
   }
 
-  /** `<child harness>-<name>-<n>`, unique among the live agents on the child's machine. */
+  /**
+   * `<child harness>-<name>-<n>`, unique among the live agents on the child's
+   * machine. herdr caps names at 32 chars: the name is cut, never the counter.
+   */
   private newId(base: string, harness: Harness, h: HerdrClient): Effect.Effect<string> {
     return Effect.gen({ self: this }, function* () {
       const live = new Set((yield* h.agentList().pipe(Effect.orElseSucceed((): AgentInfo[] => []))).map((a) => a.name));
       let id: string;
       do {
-        this.counter++;
-        id = `${harness}-${slug(base)}-${this.counter}`.slice(0, 32);
+        const n = `-${++this.counter}`;
+        id = `${harness}-${slug(base)}`.slice(0, 32 - n.length).replace(/-+$/, "") + n;
       } while (this.children.has(id) || live.has(id));
       return id;
     });
@@ -684,6 +689,7 @@ export class Manager {
         status: "queued",
         startedAt: Date.now(),
         slot: false,
+        opts: o,
       };
       this.children.set(child.id, child);
       const failed = (e: AgentError | HerdrError) => this.fail(child, e);
@@ -748,9 +754,12 @@ export class Manager {
       if (!alive) {
         const session = child.harness === "claude" ? child.sessionId : child.sessionPath;
         if (!session) return yield* new AgentError({ message: `${child.id} is gone and has no session to resume` });
+        // Harness, profile, model and cwd of the resume call are the tool's
+        // defaults, not the child's: relaunch it as it was spawned.
+        const again = { ...(child.opts ?? o), prompt: o.prompt, background: o.background, timeoutMs: o.timeoutMs };
         if (!child.slot) yield* this.acquire(child, abort);
-        yield* this.launch(child, o, session).pipe(Effect.tapError((e) => this.fail(child, e)));
-        if (child.status === "blocked") return yield* this.awaitStartup(child, o, abort);
+        yield* this.launch(child, again, session).pipe(Effect.tapError((e) => this.fail(child, e)));
+        if (child.status === "blocked") return yield* this.awaitStartup(child, again, abort);
       } else if (["starting", "running", "blocked"].includes(child.status)) {
         // A second prompt-wait on a busy child would queue behind its current tool call and race the first watcher.
         return yield* new AgentError({
@@ -1169,13 +1178,28 @@ export class Manager {
         return;
       }
       yield* h.agentPrompt(ref, message).pipe(
-        Effect.catch((e) =>
-          Effect.gen(function* () {
-            if (!isHerdrCode(e, "agent_blocked")) return yield* e;
-            const pane = child?.pane ?? (yield* h.agentGet(ref)).pane;
-            yield* log("send_via_pane", { to, pane });
-            yield* h.paneRun(pane, message);
-          }),
+        Effect.catchIf(
+          (e) => isHerdrCode(e, "agent_blocked"),
+          () =>
+            Effect.gen(function* () {
+              const { pane, harness } = yield* h.agentGet(ref);
+              // pi shows no dialog herdr can see: blocked is an expect_reply waiting at its prompt.
+              if (harness === "pi") {
+                yield* log("send_via_pane", { to, pane });
+                return yield* h.paneRun(pane, message);
+              }
+              // A Claude expect_reply is this project's own report, which herdr never clears.
+              yield* h.paneReleaseAgent(pane);
+              yield* h.agentPrompt(ref, message).pipe(
+                Effect.mapError((e) =>
+                  isHerdrCode(e, "agent_blocked")
+                    ? new AgentError({
+                        message: `${to} shows a dialog in pane ${pane} (permission prompt, question or similar). Text would answer it: a person has to, or send keys with kind=keys`,
+                      })
+                    : e,
+                ),
+              );
+            }),
         ),
       );
       if (child && child.status === "blocked") {

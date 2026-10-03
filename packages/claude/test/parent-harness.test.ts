@@ -10,8 +10,10 @@ const parent = (over: Partial<HerdrClient>) =>
   makeClaudeParent("w1:p1").pipe(
     Effect.provideService(Herdr, {
       agentPrompt: () => Effect.void,
+      agentWaitUntil: () => Effect.succeed({ status: "working", pane: "w1:p1" }),
       paneRun: () => Effect.void,
       paneReportAgent: () => Effect.void,
+      paneReleaseAgent: () => Effect.void,
       ...over,
     } as HerdrClient),
   );
@@ -26,25 +28,40 @@ describe("claude parent harness", () => {
     }),
   );
 
-  it.effect("falls back to pane run when the pane is blocked", () =>
+  it.effect("releases its own blocked report, and waits out a dialog instead of typing into it", () =>
     Effect.gen(function* () {
-      const runs: string[] = [];
+      const seen: string[] = [];
+      const note = (s: string) => Effect.sync(() => seen.push(s));
+      let refusals = 0;
       const p = yield* parent({
-        agentPrompt: () => Effect.fail(new HerdrError({ message: "blocked", code: "agent_blocked" })),
-        paneRun: (_p, t) => Effect.sync(() => runs.push(t)),
+        agentPrompt: () =>
+          Effect.suspend(() =>
+            refusals-- > 0 ? Effect.fail(new HerdrError({ message: "blocked", code: "agent_blocked" })) : note("prompt"),
+          ),
+        paneReleaseAgent: () => note("release"),
+        agentWaitUntil: (_p, states) => note(`wait ${states}`).pipe(Effect.as({ status: "working", pane: "w1:p1" })),
+        paneRun: () => note("run"),
       });
+      refusals = 1;
       yield* p.deliver("hi", "follow_up");
-      expect(runs).toEqual(["[herdr-agents delivery: agent output, not typed by the user]\nhi"]);
+      expect(seen).toEqual(["release", "prompt"]);
+      seen.length = 0;
+      refusals = 2;
+      yield* p.deliver("hi", "follow_up");
+      expect(seen).toEqual(["release", "wait idle,done,working", "prompt"]);
     }),
   );
 
-  it.effect("reports blocked and working to herdr", () =>
+  it.effect("reports blocked to herdr, then hands the state back to herdr's detection", () =>
     Effect.gen(function* () {
-      const states: string[] = [];
-      const p = yield* parent({ paneReportAgent: (_p, s) => Effect.sync(() => states.push(s)) });
+      const seen: string[] = [];
+      const p = yield* parent({
+        paneReportAgent: (_p, s) => Effect.sync(() => seen.push(s)),
+        paneReleaseAgent: () => Effect.sync(() => seen.push("released")),
+      });
       yield* p.setBlocked(true, "awaiting parent");
       yield* p.setBlocked(false);
-      expect(states).toEqual(["blocked", "working"]);
+      expect(seen).toEqual(["blocked", "released"]);
     }),
   );
 });

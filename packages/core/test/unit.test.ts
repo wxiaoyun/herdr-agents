@@ -514,6 +514,47 @@ describe("manager queue", () => {
   );
 });
 
+describe("child ids", () => {
+  it.effect("cuts a long name, never the counter, so every spawn gets a new id", () =>
+    Effect.gen(function* () {
+      const m = yield* manager();
+      const opts = { ...base, name: "review-the-auth-middleware-again" };
+      const a = (yield* m.spawn(opts)).id;
+      const b = (yield* m.spawn(opts)).id;
+      expect(a).toBe("pi-review-the-auth-middleware-1");
+      expect(b).toBe("pi-review-the-auth-middleware-2");
+    }),
+  );
+});
+
+describe("messages to a blocked agent", () => {
+  it.effect("releases a Claude expect_reply, never types into a dialog, types at a pi prompt", () =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const note = (s: string) => Effect.sync(() => seen.push(s));
+      const blocked = new HerdrError({ message: "blocked", code: "agent_blocked" });
+      let dialog = false;
+      let released = false;
+      const m = yield* manager({
+        herdr: {
+          ...emptyHerdr(),
+          agentGet: (ref) => Effect.succeed({ status: "blocked", pane: ref, harness: ref === "w1:p7" ? "pi" : "claude" }),
+          agentPrompt: (ref, text) =>
+            ref === "w1:p7" || dialog || !released ? Effect.fail(blocked) : note(`prompt ${ref} ${text}`),
+          paneReleaseAgent: (pane) => note(`release ${pane}`).pipe(Effect.andThen(Effect.sync(() => (released = true)))),
+          paneRun: (pane, text) => note(`run ${pane} ${text}`),
+        },
+      });
+      yield* m.send("w1:p5", "yes", "message");
+      yield* m.send("w1:p7", "yes", "message");
+      dialog = true;
+      const e = yield* Effect.flip(m.send("w1:p5", "no", "message"));
+      expect(e.message).toContain("shows a dialog");
+      expect(seen).toEqual(["release w1:p5", "prompt w1:p5 yes", "run w1:p7 yes", "release w1:p5"]);
+    }),
+  );
+});
+
 describe("peers", () => {
   it.effect("lists every agent with its relation, resumes an idle peer, never kills one", () =>
     Effect.gen(function* () {

@@ -203,6 +203,8 @@ export interface HerdrClient {
   paneRun(pane: string, text: string): Effect.Effect<void, HerdrError>;
   /** Report a lifecycle state for a pane whose harness cannot report it itself. */
   paneReportAgent(pane: string, state: "idle" | "working" | "blocked", message?: string): Effect.Effect<void, HerdrError>;
+  /** Drop that report, so herdr's own detection decides the state again. A no-op when there is none. */
+  paneReleaseAgent(pane: string): Effect.Effect<void, HerdrError>;
   paneClose(pane: string): Effect.Effect<void, HerdrError>;
 }
 
@@ -295,6 +297,8 @@ export function client(machine?: Machine): HerdrClient {
         state,
         ...(message ? ["--message", message] : []),
       ]),
+    paneReleaseAgent: (pane) =>
+      done(["pane", "release-agent", pane, "--source", "herdr-agents", "--agent", "claude"]),
     paneClose: (pane) => done(["pane", "close", pane]),
   };
 }

@@ -40,6 +40,7 @@ export const emptyHerdr = (): HerdrClient => ({
   sendKeys: () => Effect.void,
   paneRun: () => Effect.void,
   paneReportAgent: () => Effect.void,
+  paneReleaseAgent: () => Effect.void,
   paneClose: () => Effect.void,
 });
 

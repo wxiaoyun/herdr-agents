@@ -137,7 +137,12 @@ describe("claude session file", () => {
   const entry = (type: string, id: string, content: unknown[], out = 5) =>
     JSON.stringify({
       type,
-      message: { id, role: type, content, usage: { input_tokens: 10, output_tokens: out } },
+      message: {
+        id,
+        role: type,
+        content,
+        usage: { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 1000, output_tokens: out },
+      },
     });
 
   it("reads last assistant text and counts usage once per message id", () => {
@@ -154,9 +159,18 @@ describe("claude session file", () => {
     );
     expect(readReport("claude", f)).toEqual({
       text: "final answer",
-      usage: { input: 20, output: 12, cost: 0, turns: 2 },
+      usage: { input: 2220, output: 12, cost: undefined, turns: 2 },
     });
     expect(lastSpeaker("claude", f)).toBe("assistant");
+  });
+
+  it("takes the cost Claude recorded at exit, none once a later turn runs", () => {
+    const f = join(dir(), "s.jsonl");
+    const cost = (usd: number) => JSON.stringify({ type: "cost-state", totalCostUSD: usd });
+    writeFileSync(f, [entry("assistant", "m1", []), cost(0.5), cost(0.5)].join("\n"));
+    expect(readReport("claude", f).usage.cost).toBe(0.5);
+    writeFileSync(f, [entry("assistant", "m1", []), cost(0.5), entry("assistant", "m2", [])].join("\n"));
+    expect(readReport("claude", f).usage.cost).toBeUndefined();
   });
 
   it("treats a pending tool call as an unfinished turn", () => {
@@ -176,19 +190,31 @@ describe("claude session file", () => {
       "/cfg/projects/-Users-me-code-x-y/abc.jsonl",
     );
     expect(sessionPathFor("pi", "/x", "abc", "/cfg")).toBeUndefined();
+    // Past 200 chars Claude cuts the name and appends a hash (scheme checked against Claude Code 2.1.288).
+    expect(sessionPathFor("claude", `/home/me/${"deep-dir/".repeat(25)}`, "abc", "/cfg")).toBe(
+      `/cfg/projects/-home-me-${"deep-dir-".repeat(21)}de-o2544t/abc.jsonl`,
+    );
   });
 });
 
 describe("claude resume", () => {
-  it.effect("relaunches a gone child with --resume <session id>", () =>
+  it.effect("relaunches a gone child as it was spawned, with --resume <session id>", () =>
     Effect.gen(function* () {
       let calls = 0;
       let args: string[] = [];
+      const kinds: string[] = [];
+      const cwds: string[] = [];
       const m = yield* manager({
         herdr: {
           ...emptyHerdr(),
-          agentStart: (_id, _pane, _k, a) =>
+          tabCreate: (_l, cwd) =>
             Effect.sync(() => {
+              cwds.push(cwd);
+              return { pane: "w1:p9", cwd };
+            }),
+          agentStart: (_id, _pane, k, a) =>
+            Effect.sync(() => {
+              kinds.push(k);
               args = a;
             }),
           agentGet: () =>
@@ -200,9 +226,11 @@ describe("claude resume", () => {
             }),
         },
       });
-      const opts: SpawnOpts = { ...base, harness: "claude", background: true };
-      const first = yield* m.spawn(opts);
-      yield* m.spawn({ ...opts, resume: first.id });
+      const first = yield* m.spawn({ ...base, harness: "claude", cwd: "/repo", background: true });
+      // A resume call carries the tool's defaults, not the child's.
+      yield* m.spawn({ ...base, harness: "pi", cwd: "/elsewhere", background: true, resume: first.id });
+      expect(kinds).toEqual(["claude", "claude"]);
+      expect(cwds).toEqual(["/repo", "/repo"]);
       expect(args[args.indexOf("--resume") + 1]).toBe("sess-1");
     }),
   );
