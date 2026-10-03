@@ -1,6 +1,6 @@
-# The core runs on Effect v4, a release candidate
+# The core runs on Effect v4
 
-The effectful core (the herdr client, settings and env, logging, the Manager and the tools) is written in Effect v4, pinned to an exact `4.0.0-rc` version while no stable 4.0 exists. The tests needed control over time, env and background watchers that plain Promises could not give without sleeps and `process.env` mutation, and the untyped herdr JSON and string error codes hid bugs. Effect gives all of that through Layers, a TestClock, fibers and Schema.
+The effectful core (the herdr client, settings and env, logging, the Manager and the tools) is written in Effect v4, pinned to an exact version. It started on a `4.0.0-rc` before stable 4.0 shipped. The tests needed control over time, env and background watchers that plain Promises could not give without sleeps and `process.env` mutation, and the untyped herdr JSON and string error codes hid bugs. Effect gives all of that through Layers, a TestClock, fibers and Schema.
 
 ## Consequences
 
