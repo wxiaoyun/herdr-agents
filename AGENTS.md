@@ -2,7 +2,7 @@
 
 Source for pi, herdr and Effect lives in `deps/` as shallow git submodules, pinned to the versions this project targets. Read it there, not in sibling clones, which drift. Run `git submodule update --init` once after cloning. `deps/` is in `.ignore`, so search it explicitly, for example `rg agent_status deps/herdr`.
 
-- `deps/pi`: pi at `v0.99.0`, the version pinned in `package.json` and the minimum the README states. Typecheck only proves the APIs that exist at the pin, so change all three together.
+- `deps/pi`: pi at `v1.0.0`, the version pinned in `package.json` and the minimum the README states. Typecheck only proves the APIs that exist at the pin, so change all three together.
 - `deps/herdr`: herdr at `v0.9.1`, the minimum version this project supports, because `--machine` needs it. The README states the same floor, change both together. Also read `herdr --skill` and https://herdr.dev/llms.txt for the CLI contract.
 - `deps/effect`: Effect at `effect@4.0.0`, the version pinned in `packages/core/package.json`. The core runs on Effect v4, see [ADR 0001](docs/adr/0001-effect-v4-core.md). Read `deps/effect/packages/effect/src` and `deps/effect/MIGRATION.md` for the API, most docs online still describe v3. Never import `effect/unstable/*`.
 - Claude Code is closed source. Docs index: https://code.claude.com/docs/llms.txt. Pages this project depends on: [permission modes](https://code.claude.com/docs/en/permission-modes.md), [MCP](https://code.claude.com/docs/en/mcp.md), [CLI reference](https://code.claude.com/docs/en/cli-reference.md).

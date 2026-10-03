@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.14",
-    "@earendil-works/pi-coding-agent": "0.99.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@effect/language-service": "0.87.3",
     "@effect/vitest": "4.0.0",
     "@types/node": "^25.5.0",
