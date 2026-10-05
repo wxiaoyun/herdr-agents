@@ -174,7 +174,7 @@ export const sameDir = (got: string, asked: string): boolean => {
 /**
  * herdr `agent prompt --wait` errors with `agent_prompt_stalled` when the
  * whole turn completes before it observes a working/blocked state. The
- * session file decides within this grace period.
+ * session file decides: the grace restarts whenever the file grows.
  */
 const STALL_GRACE_MS = 30_000;
 /** Pause before looking again at a turn herdr called over mid tool call. */
@@ -861,12 +861,19 @@ export class Manager {
       const since = child.promptTurns;
       if (since === "unknown") return false;
       const h = this.hFor(child);
-      const deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
+      // ponytail: a tool call silent for STALL_GRACE_MS still loses the child, a longer grace if that bites.
+      let deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
+      let seen = -1;
       while ((yield* Clock.currentTimeMillis) < deadline) {
         const info = yield* orUndefined(h.agentGet(this.ref(child)));
         if (!info) return false;
         const path = info.sessionPath ?? child.sessionPath;
         const raw = path ? yield* this.readSession(child, path) : "";
+        // herdr can read a busy pi tab as idle: a session file still growing means the child is working.
+        if (raw.length !== seen) {
+          if (seen >= 0) deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
+          seen = raw.length;
+        }
         if (
           parseLastSpeaker(child.harness, raw) === "assistant" &&
           (since === undefined || parseReport(child.harness, raw).usage.turns > since)

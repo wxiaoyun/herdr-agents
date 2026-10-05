@@ -447,6 +447,41 @@ describe("prompt-wait stall recovery", () => {
     }),
   );
 
+  it.effect("keeps polling past the grace while the session file keeps growing", () =>
+    Effect.gen(function* () {
+      const f = join(tmp(), "s.jsonl");
+      const user = JSON.stringify({ type: "message", message: { role: "user" } });
+      writeFileSync(f, user);
+      let polls = 0;
+      const m = yield* manager({
+        herdr: {
+          ...emptyHerdr(),
+          agentPromptWait: stalled,
+          // herdr says idle all along. Activity lands every 20 s, the reply at 80 s.
+          agentGet: () =>
+            Effect.sync(() => {
+              polls++;
+              if (polls % 40 === 0) {
+                const reply =
+                  polls >= 160
+                    ? JSON.stringify({
+                        type: "message",
+                        message: { role: "assistant", content: [{ type: "text", text: "slow answer" }] },
+                      })
+                    : JSON.stringify({ type: "message", message: { role: "toolResult" } });
+                writeFileSync(f, `${user}\n${reply}${" ".repeat(polls)}`);
+              }
+              return { status: "idle", pane: "w1:p8", sessionPath: f } as AgentInfo;
+            }),
+        },
+      });
+      const spawn = yield* Effect.forkChild(m.spawn(base));
+      yield* TestClock.adjust("90 seconds");
+      const r = yield* Fiber.join(spawn);
+      expect(r.text).toContain("slow answer");
+    }),
+  );
+
   it.effect("fails when the stalled child is not in a terminal state", () =>
     Effect.gen(function* () {
       const m = yield* manager({
