@@ -172,9 +172,10 @@ export const sameDir = (got: string, asked: string): boolean => {
 };
 
 /**
- * herdr `agent prompt --wait` errors with `agent_prompt_stalled` when the
- * whole turn completes before it observes a working/blocked state. The
- * session file decides: the grace restarts whenever the file grows.
+ * herdr `agent prompt --wait` errors with `agent_prompt_stalled` when it sees
+ * no working/blocked state within 5 s: the whole turn ended unseen, or it has
+ * not started yet (a pi provider can take 20 s to start the first turn). The
+ * grace covers both and restarts whenever the session file grows.
  */
 const STALL_GRACE_MS = 30_000;
 /** Pause before looking again at a turn herdr called over mid tool call. */
@@ -847,29 +848,41 @@ export class Manager {
   }
 
   /**
-   * `idle` alone is ambiguous (booting vs finished), so poll the session file:
-   * a turn is done only once an assistant message follows the last user message
-   * and the session holds more assistant turns than before the prompt was sent.
-   * For a Machine child any herdr error may be a dropped SSH bridge, which gets
-   * the same treatment: the child may well have finished meanwhile.
+   * For a Machine child any herdr error may be a dropped SSH bridge: the child
+   * may well have finished meanwhile. A stall was already handled in promptWait.
    */
   private stalledToFinish(child: Child, e: AgentError | HerdrError): Effect.Effect<boolean> {
     return Effect.gen({ self: this }, function* () {
-      if (e._tag !== "HerdrError") return false;
-      if (e.code !== "agent_prompt_stalled" && !child.machine) return false;
+      if (e._tag !== "HerdrError" || !child.machine || e.code === "agent_prompt_stalled") return false;
+      const info = yield* orUndefined(this.turnAfter(child, e));
+      if (!info) return false;
+      yield* this.finish(child, info);
+      return true;
+    });
+  }
+
+  /**
+   * The end of a turn herdr lost sight of with `e`, or `e` when it never shows.
+   * `idle` alone is ambiguous (booting vs finished), so poll the session file:
+   * a turn is done only once an assistant message follows the last user message
+   * and the session holds more assistant turns than before the prompt was sent.
+   * After a stall, `working` means the turn started late: herdr's wait takes over.
+   */
+  private turnAfter(child: Child, e: HerdrError): Effect.Effect<AgentInfo, HerdrError> {
+    return Effect.gen({ self: this }, function* () {
       // Without a count from before the prompt, the session cannot tell this turn's reply from an earlier one.
       const since = child.promptTurns;
-      if (since === "unknown") return false;
+      if (since === "unknown") return yield* e;
       const h = this.hFor(child);
-      // ponytail: a tool call silent for STALL_GRACE_MS still loses the child, a longer grace if that bites.
+      // ponytail: when herdr never sees the turn, a tool call silent for STALL_GRACE_MS still loses the child.
       let deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
       let seen = -1;
       while ((yield* Clock.currentTimeMillis) < deadline) {
         const info = yield* orUndefined(h.agentGet(this.ref(child)));
-        if (!info) return false;
+        if (!info) return yield* e;
         const path = info.sessionPath ?? child.sessionPath;
         const raw = path ? yield* this.readSession(child, path) : "";
-        // herdr can read a busy pi tab as idle: a session file still growing means the child is working.
+        // A session file still growing means the child is working, whatever herdr says.
         if (raw.length !== seen) {
           if (seen >= 0) deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
           seen = raw.length;
@@ -879,15 +892,18 @@ export class Manager {
           (since === undefined || parseReport(child.harness, raw).usage.turns > since)
         ) {
           yield* log("prompt_wait_stalled", { id: child.id, status: info.status });
-          yield* this.finish(child, info);
-          return true;
+          return info;
+        }
+        if (info.status === "working" && e.code === "agent_prompt_stalled") {
+          yield* log("prompt_started_late", { id: child.id });
+          return yield* h.agentWait(this.ref(child));
         }
         // blocked waits on someone, unknown means the harness is gone from the pane.
-        if (info.status === "blocked" || info.status === "unknown") return false;
+        if (info.status === "blocked" || info.status === "unknown") return yield* e;
         yield* Effect.sleep("500 millis");
       }
       yield* log("prompt_wait_stall_timeout", { id: child.id, status: child.status });
-      return false;
+      return yield* e;
     });
   }
 
@@ -933,7 +949,8 @@ export class Manager {
   /**
    * Send a prompt and wait for its turn. The session's assistant turns are
    * counted first, so after a stall an earlier turn's reply is never taken for
-   * this one's (the prompt may never have landed).
+   * this one's (the prompt may never have landed). The stall is recovered here,
+   * inside the caller's timeout and abort.
    */
   private promptWait(child: Child, prompt: string): Effect.Effect<AgentInfo, HerdrError> {
     return Effect.gen({ self: this }, function* () {
@@ -948,7 +965,9 @@ export class Manager {
               ),
             )
         : 0;
-      return yield* this.hFor(child).agentPromptWait(this.ref(child), prompt);
+      return yield* this.hFor(child)
+        .agentPromptWait(this.ref(child), prompt)
+        .pipe(Effect.catchIf((e) => e.code === "agent_prompt_stalled", (e) => this.turnAfter(child, e)));
     });
   }
 

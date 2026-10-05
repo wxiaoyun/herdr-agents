@@ -435,7 +435,7 @@ describe("prompt-wait stall recovery", () => {
                   }),
                 );
               }
-              return { status: "working", pane: "w1:p8", sessionPath: f } as AgentInfo;
+              return { status: "idle", pane: "w1:p8", sessionPath: f } as AgentInfo;
             }),
         },
       });
@@ -482,20 +482,35 @@ describe("prompt-wait stall recovery", () => {
     }),
   );
 
-  it.effect("fails when the stalled child is not in a terminal state", () =>
+  it.effect("waits out a turn that starts after herdr gave up on the prompt", () =>
     Effect.gen(function* () {
+      const f = join(tmp(), "s.jsonl");
+      let polls = 0;
+      const waiting = yield* Deferred.make<void>();
+      const end = yield* Deferred.make<AgentInfo>();
       const m = yield* manager({
         herdr: {
           ...emptyHerdr(),
           agentPromptWait: stalled,
-          agentGet: () => Effect.succeed({ status: "working", pane: "w1:p8" }),
+          // The provider holds the first turn for 20 s, then a tool call runs silent for minutes.
+          agentGet: () =>
+            Effect.sync(() => ({ status: ++polls > 40 ? "working" : "idle", pane: "w1:p8", sessionPath: f }) as AgentInfo),
+          agentWait: () => Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(end))),
         },
       });
-      const spawn = yield* Effect.forkChild(Effect.flip(m.spawn(base)));
-      yield* TestClock.adjust("31 seconds");
-      const e = yield* Fiber.join(spawn);
-      expect(e.message).toMatch(/no observed working[\s\S]*last screen of pi-general-purpose-1:\nscreen/);
-      expect(m.list()[0].status).toBe("killed");
+      const spawn = yield* Effect.forkChild(m.spawn(base));
+      yield* TestClock.adjust("25 seconds");
+      yield* Deferred.await(waiting);
+      yield* TestClock.adjust("5 minutes");
+      expect(m.list()[0].status).toBe("running");
+      writeFileSync(
+        f,
+        JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "slow answer" }] } }),
+      );
+      yield* Deferred.succeed(end, { status: "done", pane: "w1:p8", sessionPath: f });
+      const r = yield* Fiber.join(spawn);
+      expect(r.status).toBe("idle");
+      expect(r.text).toContain("slow answer");
     }),
   );
 });
