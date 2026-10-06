@@ -7,7 +7,7 @@ Vocabulary is in [CONTEXT.md](./CONTEXT.md).
 ## Requirements
 
 - Node >= 26
-- pi >= 1.0.0 for a pi parent or pi children
+- pi >= 1.0.1 for a pi parent or pi children
 - herdr >= 0.9.1 with the integrations installed for the harnesses you use: `herdr integration install pi`, `herdr integration install claude`
 - The parent must run inside a herdr pane. Outside herdr the tools do nothing.
 

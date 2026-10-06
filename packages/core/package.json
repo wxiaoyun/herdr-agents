@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "effect": "4.0.0",
+    "effect": "4.0.1",
     "smol-toml": "^1.8.0",
     "yaml": "^2.9.0"
   }
