@@ -321,7 +321,7 @@ export const makeTools: Effect.Effect<
       }),
   });
 
-  yield* log("tools_created", { harness: pHarness.harness, depth, profile: myProfile || undefined });
+  if (pane) yield* log("tools_created", { harness: pHarness.harness, depth, profile: myProfile || undefined });
   return {
     agent,
     result,

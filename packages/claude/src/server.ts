@@ -5,7 +5,8 @@
  * abort does in pi.
  */
 import { createInterface } from "node:readline";
-import { createTools, logNow, type Tools } from "@herdr-agents/core";
+import { client, createTools, Herdr, logNow, type Tools } from "@herdr-agents/core";
+import { Effect, Layer } from "effect";
 import { claudeParent } from "./parent-harness.ts";
 
 const PROTOCOL = "2025-06-18";
@@ -93,10 +94,13 @@ export function serve(tools: Pick<Tools, "all">): void {
 export async function main(): Promise<void> {
   const pane =
     process.env.HERDR_ENV === "1" ? process.env.HERDR_PANE_ID : undefined;
-  const tools = await createTools(claudeParent(pane ?? ""));
+  if (!pane) logNow("disabled", { harness: "claude", reason: "not inside a herdr pane" });
+  const tools = await createTools(
+    claudeParent(pane ?? ""),
+    pane ? Herdr.layer : Layer.succeed(Herdr, { ...client(), machineList: () => Effect.succeed([]) }),
+  );
   if (!pane) {
     // Still serve, but every tool errors: Claude shows a clear reason instead of a dead server.
-    logNow("disabled", { reason: "not inside a herdr pane" });
     for (const t of tools.all) {
       t.execute = async () => ({ text: "herdr-agents: not running inside a herdr pane", isError: true });
     }

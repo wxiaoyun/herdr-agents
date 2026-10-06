@@ -9,7 +9,7 @@ import { Effect, Layer } from "effect";
 
 export default async function (pi: ExtensionAPI) {
   if (process.env.HERDR_ENV !== "1" || !process.env.HERDR_PANE_ID) {
-    logNow("disabled", { reason: "not inside a herdr pane" });
+    logNow("disabled", { harness: "pi", reason: "not inside a herdr pane" });
     return;
   }
 

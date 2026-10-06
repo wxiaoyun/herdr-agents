@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import { Herdr, type HerdrClient, HerdrError, type Tools } from "@herdr-agents/core";
@@ -107,6 +110,41 @@ describe("mcp server", () => {
     expect(await h({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 7 } })).toBeUndefined();
     expect(signal?.aborted).toBe(true);
     expect(await call).toBeUndefined();
+  });
+
+  it("serves disabled definitions without herdr I/O and logs each disabled harness", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "herdr-disabled-"));
+    const marker = join(dir, "herdr-called");
+    const log = join(dir, "debug.log");
+    writeFileSync(join(dir, "herdr"), `#!/bin/sh\nprintf called > '${marker}'\nprintf '[]\\n'\n`, { mode: 0o755 });
+    const env = { ...process.env, HERDR_ENV: "0", HERDR_PANE_ID: "", HERDR_AGENTS_LOG: log, PATH: `${dir}:${process.env.PATH}` };
+    const run = (args: string[], input = "") => new Promise<string>((resolve, reject) => {
+      const p = spawn(process.execPath, args, { env });
+      let out = "";
+      let error = "";
+      p.stdout.on("data", (d) => { out += d; });
+      p.stderr.on("data", (d) => { error += d; });
+      p.on("error", reject);
+      p.on("close", (code) => code === 0 ? resolve(out) : reject(new Error(error)));
+      p.stdin.end(input);
+    });
+    const bin = fileURLToPath(new URL("../bin/herdr-agents-mcp.ts", import.meta.url));
+    const requests = [
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "Agent", arguments: { prompt: "x" } } },
+    ];
+    const out = await run([bin], requests.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const lines = out.trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines[0].result.tools).toHaveLength(5);
+    expect(lines[1].result).toEqual({ content: [{ type: "text", text: "herdr-agents: not running inside a herdr pane" }], isError: true });
+    const pi = fileURLToPath(new URL("../../pi/src/index.ts", import.meta.url));
+    await run(["--input-type=module", "-e", `const {default: extension} = await import(${JSON.stringify(pi)}); await extension({});`]);
+    expect(existsSync(marker)).toBe(false);
+    const logged = readFileSync(log, "utf8");
+    expect(logged).toContain('stage=disabled harness="claude"');
+    expect(logged).toContain('stage=disabled harness="pi"');
+    expect(logged).not.toContain("stage=tools_created");
+    expect(logged).not.toContain("stage=herdr:");
   });
 
   it("runs under plain node over stdio", async () => {

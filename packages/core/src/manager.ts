@@ -531,9 +531,32 @@ export class Manager {
     });
   }
 
-  private learnSession(child: Child, o: SpawnOpts): Effect.Effect<AgentInfo | undefined> {
+  private learnSession(child: Child, o: Pick<SpawnOpts, "harness" | "cwd">): Effect.Effect<AgentInfo | undefined, HerdrError> {
     return Effect.gen({ self: this }, function* () {
-      const info = yield* orUndefined(this.hFor(child).agentGet(child.id));
+      const h = this.hFor(child);
+      let info = yield* orUndefined(h.agentGet(child.id));
+      if (info?.status === "blocked") {
+        child.status = "blocked";
+        return info;
+      }
+      if (o.harness === "pi" && !info?.sessionPath) {
+        yield* log("session_pending", { id: child.id, pane: child.pane, herdr_status: info?.status });
+        const deadline = (yield* Clock.currentTimeMillis) + 10_000;
+        while (!info?.sessionPath && info?.status !== "blocked" && (yield* Clock.currentTimeMillis) < deadline) {
+          yield* Effect.sleep("500 millis");
+          info = yield* orUndefined(h.agentGet(child.id));
+        }
+        if (info?.status === "blocked") {
+          child.status = "blocked";
+          return info;
+        }
+        if (!info?.sessionPath) {
+          return yield* new HerdrError({
+            code: "session_not_ready",
+            message: `${child.id} has not reported its pi session after 10000 ms. Task prompt was not sent. Pane ${child.pane} was left open. Check GetAgentResult before retrying`,
+          });
+        }
+      }
       child.sessionId = info?.sessionId;
       child.sessionPath =
         info?.sessionPath ??
@@ -746,13 +769,11 @@ export class Manager {
       const child = this.lookup(o.resume!);
       if (!child || child.peer) return yield* this.resumePeer(o, abort);
       child.background = o.background;
-      const alive = yield* this.hFor(child)
-        .agentGet(child.id)
-        .pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        );
+      const alive = yield* orUndefined(this.hFor(child).agentGet(child.id));
+      if (alive && child.status === "unknown") child.status = statusOf(alive.status);
       if (!alive) {
+        if (child.status === "unknown")
+          return yield* new AgentError({ message: `${child.id} cannot be observed. Its pane may still be working. Check it before retrying` });
         const session = child.harness === "claude" ? child.sessionId : child.sessionPath;
         if (!session) return yield* new AgentError({ message: `${child.id} is gone and has no session to resume` });
         // Harness, profile, model and cwd of the resume call are the tool's
@@ -761,7 +782,7 @@ export class Manager {
         if (!child.slot) yield* this.acquire(child, abort);
         yield* this.launch(child, again, session).pipe(Effect.tapError((e) => this.fail(child, e)));
         if (child.status === "blocked") return yield* this.awaitStartup(child, again, abort);
-      } else if (["starting", "running", "blocked"].includes(child.status)) {
+      } else if (["starting", "running", "blocked", "unknown"].includes(child.status)) {
         // A second prompt-wait on a busy child would queue behind its current tool call and race the first watcher.
         return yield* new AgentError({
           message: `${child.id} is ${child.status}; only an idle child can be resumed. SendMessage it instead, with kind=interrupt to stop its current tool call first`,
@@ -874,24 +895,26 @@ export class Manager {
       const since = child.promptTurns;
       if (since === "unknown") return yield* e;
       const h = this.hFor(child);
-      // ponytail: when herdr never sees the turn, a tool call silent for STALL_GRACE_MS still loses the child.
+      // ponytail: an unseen turn silent for STALL_GRACE_MS needs manual inspection, never automatic replay.
       let deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
       let seen = -1;
+      let herdrStatus: HerdrStatus | undefined;
       while ((yield* Clock.currentTimeMillis) < deadline) {
         const info = yield* orUndefined(h.agentGet(this.ref(child)));
         if (!info) return yield* e;
+        herdrStatus = info.status;
         const path = info.sessionPath ?? child.sessionPath;
         const raw = path ? yield* this.readSession(child, path) : "";
         // A session file still growing means the child is working, whatever herdr says.
-        if (raw.length !== seen) {
+        if (Buffer.byteLength(raw) !== seen) {
           if (seen >= 0) deadline = (yield* Clock.currentTimeMillis) + STALL_GRACE_MS;
-          seen = raw.length;
+          seen = Buffer.byteLength(raw);
         }
         if (
           parseLastSpeaker(child.harness, raw) === "assistant" &&
           (since === undefined || parseReport(child.harness, raw).usage.turns > since)
         ) {
-          yield* log("prompt_wait_stalled", { id: child.id, status: info.status });
+          yield* log("prompt_wait_stalled", { id: child.id, herdr_status: info.status, session_bytes: Buffer.byteLength(raw) });
           return info;
         }
         if (info.status === "working" && e.code === "agent_prompt_stalled") {
@@ -902,7 +925,12 @@ export class Manager {
         if (info.status === "blocked" || info.status === "unknown") return yield* e;
         yield* Effect.sleep("500 millis");
       }
-      yield* log("prompt_wait_stall_timeout", { id: child.id, status: child.status });
+      yield* log("prompt_wait_stall_timeout", {
+        id: child.id,
+        herdr_status: herdrStatus,
+        child_status: child.status,
+        session_bytes: seen,
+      });
       return yield* e;
     });
   }
@@ -954,6 +982,11 @@ export class Manager {
    */
   private promptWait(child: Child, prompt: string): Effect.Effect<AgentInfo, HerdrError> {
     return Effect.gen({ self: this }, function* () {
+      if (child.harness === "pi" && !child.sessionPath) {
+        yield* this.learnSession(child, { harness: child.harness, cwd: child.cwd ?? this.parent.cwd() });
+        if (child.status === "blocked")
+          return yield* new HerdrError({ code: "agent_blocked", message: `${child.id} is waiting on a startup dialog. Task prompt was not sent` });
+      }
       const path = child.sessionPath;
       child.promptTurns = path
         ? yield* this.hFor(child)
@@ -1036,24 +1069,24 @@ export class Manager {
     });
   }
 
-  private fail(child: Child, e: unknown): Effect.Effect<void> {
+  private fail(child: Child, e: unknown, status: AgentStatus = "killed"): Effect.Effect<void> {
     return Effect.gen({ self: this }, function* () {
-      yield* log("child_failed", { id: child.id, error: messageOf(e) });
-      child.status = "killed";
+      if (isHerdrCode(e, "session_not_ready")) {
+        const info = yield* orUndefined(this.hFor(child).agentGet(this.ref(child)));
+        status = info ? statusOf(info.status) : "unknown";
+      }
+      yield* log("child_failed", { id: child.id, status, error: messageOf(e) });
+      child.status = status;
       child.timedOut = undefined;
       child.report = {
         text: `failed: ${messageOf(e)}`,
         usage: { input: 0, output: 0, cost: 0, turns: 0 },
       };
-      yield* this.release(child);
+      if (status !== "running" && status !== "blocked" && status !== "unknown") yield* this.release(child);
     });
   }
 
-  /**
-   * Waiting failed after launch. A local child is treated as failed. A
-   * Machine child keeps running out of sight (a dropped bridge is the likely
-   * cause), so it goes idle and Resume relaunches it if it is truly gone.
-   */
+  /** Waiting failed, not necessarily the child. Preserve any live harness state. */
   private lost(child: Child, e: AgentError | HerdrError): Effect.Effect<AgentError> {
     return Effect.gen({ self: this }, function* () {
       // herdr only says the wait failed. The reason (provider outage, bad model
@@ -1063,11 +1096,13 @@ export class Manager {
             .agentRead(this.ref(child), 30)
             .pipe(Effect.orElseSucceed(() => ""))
         : "";
+      const info = yield* orUndefined(this.hFor(child).agentGet(this.ref(child)));
+      const status = info ? statusOf(info.status) : child.machine || child.peer ? "idle" : "unknown";
+      const hint = `\nPrompt delivery is unknown. Pane ${child.pane} was left open (${info?.status ?? "unavailable"}). Check GetAgentResult before sending another prompt. No automatic resend was attempted.`;
       const err = new AgentError({
-        message: `${e.message}${screen.trim() ? `\nlast screen of ${child.id}:\n${screen.trim()}` : ""}`,
+        message: `${e.message}${hint}${screen.trim() ? `\nlast screen of ${child.id}:\n${screen.trim()}` : ""}`,
       });
-      yield* this.fail(child, err);
-      if (child.machine || child.peer) child.status = "idle";
+      yield* this.fail(child, err, status);
       return err;
     });
   }

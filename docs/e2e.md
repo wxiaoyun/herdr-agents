@@ -24,6 +24,14 @@ node test/e2e.ts
 
 It prints one `PASS` or `FAIL` line per check and exits non-zero on any failure. It takes about two minutes. Both children are killed at the end, even on failure.
 
+Without an authenticated saved machine, run the local smoke check from this checkout:
+
+```sh
+HERDR_AGENTS_PROFILE= HERDR_AGENTS_DEPTH=0 HERDR_AGENTS_ID=local-e2e node test/e2e-local.ts
+```
+
+It checks pi foreground spawn, background continuation, a nonempty working screen, reports, SendMessage continuation, and kill cleanup. `E2E_PI_MODEL` selects the model. This does not replace the full check's remote and peer coverage.
+
 ## What it covers
 
 Two tool sets in one process stand in for two sessions. Session A spawns a local pi child and a remote Claude child. Session B has spawned nothing, so it sees both as peers.

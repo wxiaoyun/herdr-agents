@@ -32,7 +32,7 @@ export const emptyHerdr = (): HerdrClient => ({
   agentPromptWait: () => Effect.succeed({ status: "done", pane: "w1:p8" }),
   agentWait: () => Effect.succeed({ status: "done", pane: "w1:p8" }),
   agentWaitUntil: () => Effect.succeed({ status: "working", pane: "w1:p8" }),
-  agentGet: () => Effect.succeed({ status: "idle", pane: "w1:p8" }),
+  agentGet: () => Effect.succeed({ status: "idle", pane: "w1:p8", sessionPath: "/test/session.jsonl" }),
   agentList: () => Effect.succeed([]),
   agentRead: () => Effect.succeed("screen"),
   paneRead: () => Effect.succeed("pane screen"),

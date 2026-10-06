@@ -409,7 +409,7 @@ describe("prompt-wait stall recovery", () => {
       yield* TestClock.adjust("31 seconds");
       const e = yield* Fiber.join(spawn);
       expect(e.message).toMatch(/no observed working[\s\S]*last screen of pi-general-purpose-1:\nscreen/);
-      expect(m.list()[0].status).toBe("killed");
+      expect(m.list()[0].status).toBe("idle");
     }),
   );
 
@@ -540,7 +540,7 @@ describe("manager queue", () => {
             ),
           agentPromptWait: turn,
           agentWait: turn,
-          agentGet: () => Effect.succeed({ status: "idle", pane: "w1:p9" }),
+          agentGet: () => Effect.succeed({ status: "idle", pane: "w1:p9", sessionPath: "/test/session.jsonl" }),
         },
       });
       const opts: SpawnOpts = { ...base, model: "test/model", background: true };
@@ -733,6 +733,7 @@ describe("machines and idle children", () => {
         "box:tab parent=",
         "box:stage /tmp/herdr-agents-X",
         "box:start mcp=false",
+        "box:read /test/session.jsonl", // prompt baseline
         "box:wait",
         "box:read /remote/s.jsonl", // settle check
         "box:read /remote/s.jsonl",
@@ -740,6 +741,7 @@ describe("machines and idle children", () => {
         "local:tab parent=w1:p1",
         "local:stage same",
         "local:start mcp=true",
+        "local:read /test/session.jsonl", // prompt baseline
         "local:wait",
         "local:read /remote/s.jsonl", // settle check
         "local:read /remote/s.jsonl",
@@ -812,19 +814,25 @@ describe("machines and idle children", () => {
     }),
   );
 
-  it.effect("a machine child that loses its wait goes idle, a local one is killed", () =>
+  it.effect("a machine child that loses its wait goes idle, an unobservable local one stays unknown", () =>
     Effect.gen(function* () {
+      let reachable = true;
       const m = yield* manager({
         herdr: {
           ...emptyHerdr(),
           machineList: () => Effect.succeed([box]),
-          agentPromptWait: () => Effect.fail(new HerdrError({ message: "bridge gone", code: "ssh_failed" })),
-          agentGet: () => Effect.fail(new HerdrError({ message: "unreachable" })),
+          agentStart: () => Effect.sync(() => { reachable = true; }),
+          agentPromptWait: () => Effect.sync(() => { reachable = false; }).pipe(
+            Effect.andThen(Effect.fail(new HerdrError({ message: "bridge gone", code: "ssh_failed" }))),
+          ),
+          agentGet: () => reachable
+            ? emptyHerdr().agentGet("child")
+            : Effect.fail(new HerdrError({ message: "unreachable" })),
         },
       });
       expect((yield* Effect.flip(m.spawn({ ...base, machine: "box" }))).message).toContain("bridge gone");
       expect((yield* Effect.flip(m.spawn(base))).message).toContain("bridge gone");
-      expect(m.list().map((c) => c.status)).toEqual(["idle", "killed"]);
+      expect(m.list().map((c) => c.status)).toEqual(["idle", "unknown"]);
     }),
   );
 

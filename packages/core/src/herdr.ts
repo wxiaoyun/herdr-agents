@@ -21,6 +21,7 @@ export type HerdrCode =
   | "agent_not_ready"
   | "agent_blocked"
   | "agent_prompt_stalled"
+  | "session_not_ready"
   | "workspace_not_found"
   | "timeout";
 
@@ -122,7 +123,7 @@ const run = (bin: string, args: string[], stage: string, machine?: string): Effe
       const code = parsed?.error?.code ?? parsed?.code;
       const msg = parsed?.error?.message ?? parsed?.message ?? (stderr.trim() || err.message);
       resume(
-        log(stage, { error: msg, code, machine }).pipe(
+        log(`${bin === "herdr" ? "herdr:" : ""}${stage.replaceAll(" ", "_")}`, { error: msg, code, machine }).pipe(
           Effect.andThen(Effect.fail(new HerdrError({ message: `${stage} failed: ${msg}`, code }))),
         ),
       );
@@ -278,7 +279,12 @@ export function client(machine?: Machine): HerdrClient {
     agentGet: (id) => agent(["agent", "get", id]),
     agentList: () => call(["agent", "list"], AgentListResult).pipe(Effect.map((r) => r.agents.map(toAgentInfo))),
     agentRead: (id, lines) =>
-      herdrRaw(["agent", "read", id, "--source", "recent-unwrapped", "--lines", String(lines)], m),
+      herdrRaw(["agent", "read", id, "--source", "recent-unwrapped", "--lines", String(lines)], m).pipe(
+        Effect.catchIf(
+          (e) => e.code === "agent_not_idle",
+          () => herdrRaw(["agent", "read", id, "--source", "visible", "--lines", String(lines)], m),
+        ),
+      ),
     paneRead: (pane, lines) =>
       herdrRaw(["pane", "read", pane, "--source", "recent-unwrapped", "--lines", String(lines)], m),
     agentFocus: (id) => done(["agent", "focus", id]),
