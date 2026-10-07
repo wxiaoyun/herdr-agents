@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { ConfigProvider, Deferred, Effect, Fiber, FiberMap, Layer, Queue } from "effect";
+import { ConfigProvider, Deferred, Effect, Fiber, FiberMap, Layer, Logger, Queue, References } from "effect";
 import { TestClock } from "effect/testing";
 import { Compile } from "typebox/compile";
 import { type AgentInfo, client, type HerdrClient, HerdrError } from "../src/herdr.ts";
@@ -914,6 +914,18 @@ describe("machines and idle children", () => {
       expect(closed).toEqual(["w1:p9"]);
     }),
   );
+
+  it.effect("logs who closed a killed child's pane", () => {
+    const logs: Array<Record<string, unknown>> = [];
+    return Effect.gen(function* () {
+      const m = yield* manager();
+      const a = yield* m.spawn(base);
+      yield* m.kill(a.id);
+      expect(logs).toEqual([{ id: a.id, status: "idle", pane: "w1:p9" }]);
+    }).pipe(Effect.provide(Logger.layer([Logger.make(({ message, fiber }) => {
+      if (String(message) === "child_killed") logs.push(fiber.getRef(References.CurrentLogAnnotations));
+    })])));
+  });
 
   it.effect("holds a Delivery while the parent is busy and drops it once the Report is read", () =>
     Effect.gen(function* () {
