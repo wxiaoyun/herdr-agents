@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Deferred, Effect, Fiber, FiberMap, Layer, Queue } from "effect";
@@ -6,7 +6,7 @@ import { TestClock } from "effect/testing";
 import { Compile } from "typebox/compile";
 import { type AgentInfo, client, type HerdrClient, HerdrError } from "../src/herdr.ts";
 import { FileLogger, LOG_ENV, log } from "../src/log.ts";
-import { childWorkspaceLabel, ENV_PARENT, type SpawnOpts, sameDir } from "../src/manager.ts";
+import { childWorkspaceLabel, ENV_PARENT, type SpawnOpts, sameDir, sameLocalDir } from "../src/manager.ts";
 import { BUILTIN_PROFILES, loadProfiles } from "../src/profiles.ts";
 import { parseReport } from "../src/session.ts";
 import { DEFAULTS, readSettings } from "../src/settings.ts";
@@ -778,6 +778,18 @@ describe("machines and idle children", () => {
     expect(sameDir("/home/you", "code/x")).toBe(false);
     expect(sameDir("/home/you", "~")).toBe(true);
     expect(sameDir("/opt/x/", "/opt/x")).toBe(true);
+  });
+
+  it("accepts a local cwd that herdr reports with symlinks resolved", () => {
+    const real = join(realpathSync(tmp()), "x");
+    mkdirSync(real);
+    const link = join(tmp(), "link");
+    symlinkSync(real, link);
+    expect(sameDir(real, link)).toBe(false);
+    expect(sameLocalDir(real, link)).toBe(true);
+    expect(sameLocalDir(real, `${link}/`)).toBe(true);
+    expect(sameLocalDir(real, join(link, "missing"))).toBe(false);
+    expect(sameLocalDir("/home/me", "/missing/")).toBe(false);
   });
 
   it.effect("lists saved machines in the Agent description, none when there are none", () =>

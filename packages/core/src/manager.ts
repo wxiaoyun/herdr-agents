@@ -5,7 +5,7 @@
  * per child, so a new wait or a kill interrupts the old one.
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Clock, Config, Data, Effect, FiberMap, Option, Result, type Scope, Semaphore } from "effect";
@@ -169,6 +169,16 @@ export const sameDir = (got: string, asked: string): boolean => {
   if (a === "~") return true;
   const g = stripSlash(got);
   return a.startsWith("/") ? g === a : g.endsWith(`/${a}`);
+};
+
+/** herdr reports a local cwd with symlinks resolved (/home -> /data00/home, macOS /tmp). */
+export const sameLocalDir = (got: string, asked: string): boolean => {
+  if (sameDir(got, asked)) return true;
+  try {
+    return sameDir(got, realpathSync(asked));
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -653,9 +663,7 @@ export class Manager {
           }),
         ),
       );
-      // ponytail: exact string compare; a symlinked cwd (macOS /tmp) would trip
-      // it, resolve both sides if that bites.
-      if (!sameDir(made.cwd, cwd)) {
+      if (!(child.machine ? sameDir(made.cwd, cwd) : sameLocalDir(made.cwd, cwd))) {
         child.pane = made.pane;
         yield* this.closePane(child);
         child.pane = undefined;
