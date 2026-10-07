@@ -1289,6 +1289,7 @@ export class Manager {
       if (child.peer) return yield* new AgentError({ message: `${id} is a peer: only its parent can kill it` });
       // A queued child's fiber is still in line: interrupting it frees nothing.
       yield* FiberMap.remove(this.watchers, child.id);
+      yield* log("child_killed", { id: child.id, status: child.status, pane: child.pane });
       yield* this.closePane(child);
       child.status = "killed";
       yield* this.release(child);
