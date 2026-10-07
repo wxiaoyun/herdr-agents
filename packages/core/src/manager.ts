@@ -527,7 +527,7 @@ export class Manager {
               child.status = "blocked";
               return false;
             }
-            yield* log("agent_start_failed", { id: child.id, error: e.message });
+            yield* log("agent_start_failed", { id: child.id, cwd: child.cwd, error: e.message });
             // The harness usually says why on its way out (unknown model, tool
             // name conflict), and the pane is about to close.
             const screen = yield* h.paneRead(pane, 30).pipe(Effect.orElseSucceed(() => ""));
@@ -580,6 +580,7 @@ export class Manager {
       yield* log("launched", {
         id: child.id,
         pane: child.pane,
+        cwd: child.cwd,
         machine: child.machine?.label,
         session: child.sessionPath,
       });
