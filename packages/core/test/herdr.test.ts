@@ -33,6 +33,28 @@ describe("herdr command boundary", () => {
     }),
   );
 
+  it.effect("logs the length of a sent message, never its text", () =>
+    Effect.gen(function* () {
+      const logs: Array<Record<string, unknown>> = [];
+      vi.mocked(execFile).mockImplementation(((_bin: string, _args: string[], _opts: unknown, done: (error: Error | null, stdout: string, stderr: string) => void) => {
+        done(null, JSON.stringify({ result: { agent: { agent_id: "child", status: "idle" } } }), "");
+      }) as any);
+      const h = client();
+      const secret = "the pilot is job 6767509";
+      yield* Effect.all([h.agentPrompt("child", secret), h.agentPromptWait("child", secret).pipe(Effect.ignore), h.paneRun("p1", secret)]).pipe(
+        Effect.provide(Logger.layer([Logger.make(({ message, fiber }) => {
+          logs.push({ stage: Array.isArray(message) ? message.join(" ") : message, ...fiber.getRef(References.CurrentLogAnnotations) });
+        })])),
+      );
+      expect(logs.map(({ stage, args, textLen }) => ({ stage, args, textLen }))).toEqual([
+        { stage: "herdr:agent_prompt", args: ["child"], textLen: secret.length },
+        { stage: "herdr:agent_prompt", args: ["child", "--wait"], textLen: secret.length },
+        { stage: "herdr:pane_run", args: ["p1"], textLen: secret.length },
+      ]);
+      expect(JSON.stringify(logs)).not.toContain("6767509");
+    }),
+  );
+
   it.effect("does not retry unrelated read errors or a failed visible fallback", () =>
     Effect.gen(function* () {
       for (const code of ["agent_not_found", "agent_not_idle"]) {

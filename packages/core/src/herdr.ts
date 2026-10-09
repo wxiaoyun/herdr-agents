@@ -130,10 +130,16 @@ const run = (bin: string, args: string[], stage: string, machine?: string): Effe
     });
   });
 
+/** Commands whose fourth arg is a message for an agent or pane. */
+const SENDS_TEXT = new Set(["agent prompt", "pane run"]);
+
 /** Raw stdout of a herdr command. Logs the call first, without the text it sends. */
 const herdrRaw = (args: string[], machine?: string): Effect.Effect<string, HerdrError> => {
   const stage = args.slice(0, 2).join(" ");
-  return log(`herdr:${stage.replace(" ", "_")}`, { args: args.slice(2, 6), machine }).pipe(
+  const fields = SENDS_TEXT.has(stage)
+    ? { args: [args[2], ...args.slice(4, 6)], textLen: args[3]?.length }
+    : { args: args.slice(2, 6) };
+  return log(`herdr:${stage.replace(" ", "_")}`, { ...fields, machine }).pipe(
     Effect.andThen(run("herdr", [...(machine ? ["--machine", machine] : []), ...args], stage, machine)),
   );
 };
