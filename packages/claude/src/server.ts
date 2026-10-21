@@ -105,5 +105,20 @@ export async function main(): Promise<void> {
       t.execute = async () => ({ text: "herdr-agents: not running inside a herdr pane", isError: true });
     }
   }
+  // Leave a trace of children this process can no longer report on.
+  const shutdown = (reason: string) =>
+    logNow("shutdown", {
+      reason,
+      children: tools.manager
+        .list()
+        .filter((c) => !["idle", "closed", "killed"].includes(c.status))
+        .map((c) => ({ id: c.id, pane: c.pane, status: c.status })),
+    });
+  process.stdin.on("close", () => shutdown("stdin_close"));
+  for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const)
+    process.once(signal, () => {
+      shutdown(signal);
+      process.exit(code);
+    });
   serve(tools);
 }
