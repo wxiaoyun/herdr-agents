@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 import { Herdr, type HerdrClient, HerdrError, type Tools } from "@herdr-agents/core";
-import { Effect } from "effect";
+import { Effect, Logger, References } from "effect";
 import { makeClaudeParent } from "../src/parent-harness.ts";
 import { handler } from "../src/server.ts";
 
@@ -26,7 +26,13 @@ describe("claude parent harness", () => {
     Effect.gen(function* () {
       const prompts: string[] = [];
       const p = yield* parent({ agentPrompt: (id, t) => Effect.sync(() => prompts.push(`${id}:${t}`)) });
-      yield* p.deliver("report text", "passive");
+      const logs: Record<string, unknown>[] = [];
+      yield* p.deliver("report text", "passive").pipe(
+        Effect.provide(Logger.layer([Logger.make(({ message, fiber }) => {
+          logs.push({ stage: Array.isArray(message) ? message.join(" ") : message, ...fiber.getRef(References.CurrentLogAnnotations) });
+        })])),
+      );
+      expect(logs).toEqual([{ stage: "deliver_ok", pane: "w1:p1", reportLen: 11 }]);
       expect(prompts).toEqual(["w1:p1:[herdr-agents delivery: agent output, not typed by the user]\nreport text"]);
     }),
   );
@@ -143,19 +149,24 @@ describe("mcp server", () => {
     const logged = readFileSync(log, "utf8");
     expect(logged).toContain('stage=disabled harness="claude"');
     expect(logged).toContain('stage=disabled harness="pi"');
+    expect(logged).toContain('stage=shutdown reason="stdin_close" children=[]');
     expect(logged).not.toContain("stage=tools_created");
     expect(logged).not.toContain("stage=herdr:");
   });
 
   it("runs under plain node over stdio", async () => {
     const bin = fileURLToPath(new URL("../bin/herdr-agents-mcp.ts", import.meta.url));
-    const p = spawn("node", [bin], { env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "w0:p0" } });
+    const log = join(mkdtempSync(join(tmpdir(), "herdr-stdio-")), "debug.log");
+    const p = spawn("node", [bin], { env: { ...process.env, HERDR_ENV: "1", HERDR_PANE_ID: "w0:p0", HERDR_AGENTS_LOG: log } });
     let out = "";
     p.stdout.on("data", (d) => { out += d; });
     p.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} })}\n`);
     p.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
     for (let i = 0; i < 100 && out.split("\n").filter(Boolean).length < 2; i++) await new Promise((r) => setTimeout(r, 50));
+    const exited = new Promise((r) => p.on("exit", r));
     p.kill();
+    expect(await exited).toBe(143);
+    expect(readFileSync(log, "utf8")).toContain('stage=shutdown reason="SIGTERM" children=[]');
     const lines = out.trim().split("\n").map((l) => JSON.parse(l));
     expect(lines[0].result.serverInfo.name).toBe("herdr");
     expect(lines[1].result.tools.map((t: any) => t.name)).toEqual(["Agent", "GetAgentResult", "SendMessage", "KillAgent", "ListAgents"]);

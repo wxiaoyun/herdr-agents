@@ -1056,7 +1056,7 @@ export class Manager {
       if (info.status === "blocked") {
         child.status = "blocked";
         child.report = yield* this.fromSession(child);
-        yield* log("child_blocked", { id: child.id });
+        yield* log("child_blocked", { id: child.id, pane: child.pane });
         return;
       }
       child.report = yield* this.collect(child);

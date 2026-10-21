@@ -29,6 +29,7 @@ export const makeClaudeParent = (pane: string): Effect.Effect<ParentHarnessShape
               Effect.andThen(prompt),
             ),
           ),
+          Effect.andThen(log("deliver_ok", { pane, reportLen: report.length })),
           Effect.catch((e) => log("deliver_failed", { pane, error: e.message })),
         );
       },
