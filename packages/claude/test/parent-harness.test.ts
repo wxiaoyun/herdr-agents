@@ -27,13 +27,35 @@ describe("claude parent harness", () => {
       const prompts: string[] = [];
       const p = yield* parent({ agentPrompt: (id, t) => Effect.sync(() => prompts.push(`${id}:${t}`)) });
       const logs: Record<string, unknown>[] = [];
-      yield* p.deliver("report text", "passive").pipe(
+      yield* p.deliver("report text", "passive", "c1").pipe(
         Effect.provide(Logger.layer([Logger.make(({ message, fiber }) => {
           logs.push({ stage: Array.isArray(message) ? message.join(" ") : message, ...fiber.getRef(References.CurrentLogAnnotations) });
         })])),
       );
       expect(logs).toEqual([{ stage: "deliver_ok", pane: "w1:p1", reportLen: 11 }]);
       expect(prompts).toEqual(["w1:p1:[herdr-agents delivery: agent output, not typed by the user]\nreport text"]);
+    }),
+  );
+
+  it.effect("a report it cannot deliver is logged with its child, length and error code", () =>
+    Effect.gen(function* () {
+      const p = yield* parent({
+        agentPrompt: () => Effect.fail(new HerdrError({ message: "agent target w1:p1 not found", code: "agent_not_found" })),
+      });
+      const logs: Record<string, unknown>[] = [];
+      yield* p.deliver("report text", "passive", "c1").pipe(
+        Effect.provide(Logger.layer([Logger.make(({ message, fiber }) => {
+          logs.push({ stage: Array.isArray(message) ? message.join(" ") : message, ...fiber.getRef(References.CurrentLogAnnotations) });
+        })])),
+      );
+      expect(logs).toEqual([{
+        stage: "deliver_failed",
+        pane: "w1:p1",
+        id: "c1",
+        reportLen: 11,
+        code: "agent_not_found",
+        error: "agent target w1:p1 not found",
+      }]);
     }),
   );
 
@@ -52,11 +74,11 @@ describe("claude parent harness", () => {
         paneRun: () => note("run"),
       });
       refusals = 1;
-      yield* p.deliver("hi", "follow_up");
+      yield* p.deliver("hi", "follow_up", "c1");
       expect(seen).toEqual(["release", "prompt"]);
       seen.length = 0;
       refusals = 2;
-      yield* p.deliver("hi", "follow_up");
+      yield* p.deliver("hi", "follow_up", "c1");
       expect(seen).toEqual(["release", "wait idle,done,working", "prompt"]);
     }),
   );
