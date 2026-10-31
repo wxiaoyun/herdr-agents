@@ -15,8 +15,8 @@ export interface ParentHarnessShape {
   /** Parent defaults, applied only to children of the same harness. */
   model?(): string | undefined;
   thinking?(): string | undefined;
-  /** Put text in front of the parent conversation. */
-  deliver(text: string, notify: "follow_up" | "passive"): Effect.Effect<void>;
+  /** Put a child's Report in front of the parent conversation. */
+  deliver(text: string, notify: "follow_up" | "passive", childId: string): Effect.Effect<void>;
   /**
    * True while the parent runs a turn. The Manager then holds Deliveries until
    * the parent harness calls `Manager.flush`, so a Report the parent reads

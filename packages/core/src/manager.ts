@@ -1174,7 +1174,7 @@ export class Manager {
         return log("deliver_held", { id: child.id });
       }
       const report = this.formatReport(child);
-      return this.settings().pipe(Effect.flatMap((s) => this.parent.deliver(report, s.notify)));
+      return this.settings().pipe(Effect.flatMap((s) => this.parent.deliver(report, s.notify, child.id)));
     });
   }
 
@@ -1192,7 +1192,7 @@ export class Manager {
       const { notify } = yield* this.settings();
       for (const child of held) {
         yield* log("deliver_flush", { id: child.id });
-        yield* this.parent.deliver(this.formatReport(child), notify);
+        yield* this.parent.deliver(this.formatReport(child), notify, child.id);
       }
     });
   }

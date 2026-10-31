@@ -15,7 +15,7 @@ export const makeClaudeParent = (pane: string): Effect.Effect<ParentHarnessShape
       harness: "claude",
       cwd: () => process.cwd(),
       // notify is ignored: typing into the pane always triggers a turn.
-      deliver: (report) => {
+      deliver: (report, _notify, id) => {
         // It lands as a user message, so say who really wrote it.
         const text = `[herdr-agents delivery: agent output, not typed by the user]\n${report}`;
         const prompt = h.agentPrompt(pane, text);
@@ -30,7 +30,7 @@ export const makeClaudeParent = (pane: string): Effect.Effect<ParentHarnessShape
             ),
           ),
           Effect.andThen(log("deliver_ok", { pane, reportLen: report.length })),
-          Effect.catch((e) => log("deliver_failed", { pane, error: e.message })),
+          Effect.catch((e) => log("deliver_failed", { pane, id, reportLen: report.length, code: e.code, error: e.message })),
         );
       },
       // herdr never clears a reported blocked state on its own: a self-report
