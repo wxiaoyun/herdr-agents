@@ -28,6 +28,29 @@ describe("pi readiness and uncertain delivery", () => {
     }),
   );
 
+  it.effect("waits for a claude session id before sending the first prompt", () =>
+    Effect.gen(function* () {
+      const pending = yield* Deferred.make<void>();
+      let polls = 0;
+      let prompts = 0;
+      const m = yield* manager({ herdr: {
+        ...emptyHerdr(),
+        agentGet: () =>
+          Effect.sync((): AgentInfo => ++polls >= 3 ? { ...idle, sessionId: "sess-1" } : idle).pipe(
+            Effect.tap(() => Deferred.succeed(pending, undefined)),
+          ),
+        agentPromptWait: () => Effect.sync(() => { prompts++; return idle; }),
+      } });
+      const spawn = yield* Effect.forkChild(m.spawn({ ...base, harness: "claude", cwd: "/repo" }));
+      yield* Deferred.await(pending);
+      expect(prompts).toBe(0);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(spawn);
+      expect(prompts).toBe(1);
+      expect(m.list()[0].sessionPath).toMatch(/projects\/-repo\/sess-1\.jsonl$/);
+    }),
+  );
+
   it.effect("times out without sending a task or closing the idle pane", () =>
     Effect.gen(function* () {
       let prompts = 0;

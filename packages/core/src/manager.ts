@@ -549,10 +549,16 @@ export class Manager {
         child.status = "blocked";
         return info;
       }
-      if (o.harness === "pi" && !info?.sessionPath) {
+      // pi reports its session path, Claude Code only its session id, which
+      // can arrive after the pane goes idle. Without a path the first turn
+      // cannot be confirmed, so wait for either before the prompt is sent.
+      const pathOf = (i: AgentInfo | undefined) =>
+        i?.sessionPath ??
+        sessionPathFor(o.harness, child.cwd ?? o.cwd, i?.sessionId, child.machine ? "~/.claude" : this.env.claudeDir);
+      if (!pathOf(info)) {
         yield* log("session_pending", { id: child.id, pane: child.pane, herdr_status: info?.status });
         const deadline = (yield* Clock.currentTimeMillis) + 10_000;
-        while (!info?.sessionPath && info?.status !== "blocked" && (yield* Clock.currentTimeMillis) < deadline) {
+        while (!pathOf(info) && info?.status !== "blocked" && (yield* Clock.currentTimeMillis) < deadline) {
           yield* Effect.sleep("500 millis");
           info = yield* orUndefined(h.agentGet(child.id));
         }
@@ -560,22 +566,15 @@ export class Manager {
           child.status = "blocked";
           return info;
         }
-        if (!info?.sessionPath) {
+        if (!pathOf(info)) {
           return yield* new HerdrError({
             code: "session_not_ready",
-            message: `${child.id} has not reported its pi session after 10000 ms. Task prompt was not sent. Pane ${child.pane} was left open. Check GetAgentResult before retrying`,
+            message: `${child.id} has not reported its ${o.harness} session after 10000 ms. Task prompt was not sent. Pane ${child.pane} was left open. Check GetAgentResult before retrying`,
           });
         }
       }
       child.sessionId = info?.sessionId;
-      child.sessionPath =
-        info?.sessionPath ??
-        sessionPathFor(
-          o.harness,
-          child.cwd ?? o.cwd,
-          info?.sessionId,
-          child.machine ? "~/.claude" : this.env.claudeDir,
-        );
+      child.sessionPath = pathOf(info);
       child.status = "running";
       yield* log("launched", {
         id: child.id,
@@ -991,7 +990,7 @@ export class Manager {
    */
   private promptWait(child: Child, prompt: string): Effect.Effect<AgentInfo, HerdrError> {
     return Effect.gen({ self: this }, function* () {
-      if (child.harness === "pi" && !child.sessionPath) {
+      if (!child.sessionPath) {
         yield* this.learnSession(child, { harness: child.harness, cwd: child.cwd ?? this.parent.cwd() });
         if (child.status === "blocked")
           return yield* new HerdrError({ code: "agent_blocked", message: `${child.id} is waiting on a startup dialog. Task prompt was not sent` });
