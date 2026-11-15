@@ -218,6 +218,8 @@ export class Manager {
   readonly watchers: FiberMap.FiberMap<string>;
   private counter = 0;
   private readonly childWs = new Map<string, string>();
+  /** Serializes childWorkspace so parallel spawns share one workspace. */
+  private readonly childWsLock = Semaphore.makeUnsafe(1);
   /** Children whose Delivery waits for the parent's turn to end. */
   private readonly held = new Set<Child>();
   private readonly h: HerdrClient;
@@ -658,8 +660,7 @@ export class Manager {
             // Someone closed the cached child workspace: resolve it again, once.
             if (!isHerdrCode(e, "workspace_not_found")) return yield* e;
             yield* log("child_workspace_stale", { id: ws, machine: child.machine?.label });
-            this.childWs.delete(child.machine?.id ?? "");
-            return yield* h.tabCreate(child.id, cwd, env, yield* this.childWorkspace(child, cwd));
+            return yield* h.tabCreate(child.id, cwd, env, yield* this.childWorkspace(child, cwd, ws));
           }),
         ),
       );
@@ -679,12 +680,16 @@ export class Manager {
    * herdr relabels an unlabelled workspace after the focused pane's cwd, so
    * the derived label can drift mid-session. Resolve once per parent process
    * and per machine. The label comes from the parent's own workspace.
+   * Parallel spawns run it one at a time, so only the first one lists and
+   * creates the workspace. `stale` is a cached id that herdr no longer knows,
+   * dropped only if no other spawn has replaced it already.
    */
-  private childWorkspace(child: Child, cwd: string): Effect.Effect<string | undefined, HerdrError> {
-    return Effect.gen({ self: this }, function* () {
+  private childWorkspace(child: Child, cwd: string, stale?: string): Effect.Effect<string | undefined, HerdrError> {
+    const resolve = Effect.gen({ self: this }, function* () {
       const mine = this.env.workspace;
       if (!mine) return undefined;
       const key = child.machine?.id ?? "";
+      if (stale && this.childWs.get(key) === stale) this.childWs.delete(key);
       let ws = this.childWs.get(key);
       if (!ws) {
         const label = childWorkspaceLabel(yield* this.h.workspaceLabel(mine));
@@ -694,6 +699,7 @@ export class Manager {
       }
       return ws;
     });
+    return this.childWsLock.withPermit(resolve);
   }
 
   private closePane(child: Child): Effect.Effect<void> {

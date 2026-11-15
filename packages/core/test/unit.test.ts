@@ -162,6 +162,28 @@ describe("session", () => {
       expect(used).toEqual(["w9", "w10"]);
     }),
   );
+
+  it.effect("puts children spawned in parallel in one child workspace", () =>
+    Effect.gen(function* () {
+      let lookups = 0;
+      const used: Array<string | undefined> = [];
+      const m = yield* manager({
+        env: { HERDR_WORKSPACE_ID: "w1" },
+        herdr: {
+          ...emptyHerdr(),
+          // Yields like the real list then create, so a second spawn could slip in.
+          workspaceByLabel: () => Effect.yieldNow.pipe(Effect.as(`w${10 + ++lookups}`)),
+          tabCreate: (_l, cwd, _e, ws) => {
+            used.push(ws);
+            return Effect.succeed({ pane: `${ws}:p${used.length}`, cwd });
+          },
+        },
+      });
+      yield* Effect.all([m.spawn(base), m.spawn(base)], { concurrency: "unbounded" });
+      expect(lookups).toBe(1);
+      expect(used).toEqual(["w11", "w11"]);
+    }),
+  );
 });
 
 describe("profiles", () => {
